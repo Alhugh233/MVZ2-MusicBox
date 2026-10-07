@@ -44,6 +44,7 @@ This project is developed with **Vibe Coding**: the code and documentation are w
   - per-phase music for Boss stages;
   - chapter map BGM, separated by map preset (e.g. Dream / Nightmare map).
 - **Dual-track support**: map BGM can play the main track and continue with the sub track in a loop.
+- **Asynchronous decoding + disk cache**: tracks are decoded on background threads and cached to disk (PCM), so subsequent launches skip OGG decoding entirely.
 - **Dynamic scene resolution**: chapters / Boss stages / map presets are enumerated from game data at runtime, and only chapters unlocked in the current save are shown.
 
 ## Installation
@@ -192,7 +193,7 @@ Output is in `bin/Debug/net6.0/`. Deploy `MusicBox.dll`, `NVorbis.dll`, `Concent
 
 - **Only the game's default language (Simplified Chinese) is supported; the mod does not support I18N yet.**
 - The Boss phase track table is maintained statically; new bosses in the game require updating it.
-- Audio decoding runs on the main thread, so a long track may cause a brief hitch the first time the Music Room is opened (clips are pre-decoded on entering the Music Room where possible).
+- In non-Music-Room scenes (battle / map), the required custom track is decoded synchronously before playback; on a fresh install without a warm disk cache this may block briefly the first time. The Music Room decodes in the background and refreshes the shown track info once ready (e.g. `??:??` -> real duration).
 - Music pack icons (`pack.png`) are not supported yet.
 - For battle / Boss music, dual-track still follows the game's original logic (huge-wave crossfade); the "main then sub" order is not applied there.
 
@@ -215,7 +216,7 @@ MusicBox/
 ### Main logic
 
 - **Startup**: `Plugin.Load` applies Harmony and registers the injected type; `Patches/StartupLoadPatch.cs` loads music packs and battle config after `MainManager.Initialize`.
-- **Music packs**: `MusicPackLoader.Reload` scans / parses / validates (whole-pack rejection) and registers `MusicMeta` plus audio file paths; audio is decoded **lazily** (pre-decoded when entering the Music Room, on demand at playback) to avoid creating AudioClips too early.
+- **Music packs**: `MusicPackLoader.Reload` scans / parses / validates (whole-pack rejection) and registers `MusicMeta` plus audio file paths. Audio is decoded **asynchronously** on background threads (OGG -> PCM, with a persistent on-disk PCM cache keyed by source file size + mtime), and the AudioClip is created on the main thread by a pump (`MusicManager.Update`). For non-Music-Room scenes (battle / map overrides), the required track is decoded synchronously before playback to guarantee it is ready.
 - **Game integration**: patches to `ResourceManager.GetAllMusicID/GetMusicMeta/GetMusicClip` bring custom tracks into the Music Room; `LogicSaveExt.IsMusicRoomUnlocked` always returns `true` to keep the Music Room visible.
 - **Battle / map BGM**: `BattleMusic` enumerates chapters / Boss stages / map presets at runtime and resolves the custom track for the current scene. When overriding, the **playing ID is not changed**; instead, during the `MusicManager.Play`/`SetPlayingMusic` call the meta for that ID is temporarily redirected to the custom track, so the game's own logic (e.g. Dream/Nightmare switching) keeps working.
 - **Dual track**: for map BGM, the main and sub track PCM is concatenated into one looping AudioClip during decoding.

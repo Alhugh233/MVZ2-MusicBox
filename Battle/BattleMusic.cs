@@ -254,7 +254,10 @@ internal static class BattleMusic
                         result = MusicRegistry.ClipFiles.ContainsKey(mid!.Path + "_sub")
                             ? new NamespaceID(MusicRegistry.Namespace, mid.Path + "#seq")
                             : mid;
-                        return true;
+                        if (Prepare(result))
+                            return true;
+                        result = null;
+                        return false;
                     }
                 }
                 return false;
@@ -284,7 +287,10 @@ internal static class BattleMusic
                 if (!NamespaceID.IsValid(id))
                     return false;
                 result = id;
-                return true;
+                if (Prepare(result))
+                    return true;
+                result = null;
+                return false;
             }
 
             if (!AreaMusic.TryGetValue(Key(requested), out var value))
@@ -295,13 +301,24 @@ internal static class BattleMusic
             if (!NamespaceID.IsValid(custom))
                 return false;
             result = custom;
-            return true;
+            if (Prepare(result))
+                return true;
+            result = null;
+            return false;
         }
         catch (Exception e)
         {
             Plugin.Log.LogError($"[MusicBox] Battle music resolve failed: {e}");
             return false;
         }
+    }
+
+    // 非音乐室场景：播放前同步确保自定义曲（含 #seq）已解码就绪。
+    private static bool Prepare(NamespaceID? id)
+    {
+        if (id == null)
+            return false;
+        return MusicPackLoader.EnsureClipSync(id.Path);
     }
 
     private static string? FindMapArea(NamespaceID requested)

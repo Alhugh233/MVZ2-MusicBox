@@ -311,6 +311,12 @@ internal static class MusicPackLoader
         built = false;
 
         MusicRegistry.Reset();
+        lock (asyncLock)
+        {
+            pendingDecodes.Clear();
+            failedDecodes.Clear();
+            completedDecodes.Clear();
+        }
 
         try
         {
@@ -364,6 +370,9 @@ internal static class MusicPackLoader
 
         Diag.Log($"[MusicBox] Reload built. {packs.Count} pack(s), {allMainPaths.Count} song(s).");
         Diag.Log($"[MusicBox] Loaded {packs.Count} music pack(s), {allMainPaths.Count} song(s).");
+
+        // 启动/重载后即后台预解码全部曲目（含双轨 #seq）。
+        EnsureClipsDecoded();
     }
 
     private static MusicPack? TryLoadPack(string sourcePath, bool isZip, string key)
@@ -641,56 +650,129 @@ internal static class MusicPackLoader
         public int SampleRate = 48000;
     }
 
-    public static bool EnsureClip(string path)
+    private const int PCM_CACHE_MAGIC = 0x4D42504D; // "MBPM"
+    private const int PCM_CACHE_VERSION = 1;
+    private static readonly object asyncLock = new object();
+    private static readonly HashSet<string> pendingDecodes = new HashSet<string>();
+    private static readonly HashSet<string> failedDecodes = new HashSet<string>();
+    private static readonly List<KeyValuePair<string, Pcm?>> completedDecodes = new List<KeyValuePair<string, Pcm?>>();
+
+    private static string PcmCacheDir => Path.Combine(MusicRegistry.CacheDir, "pcm");
+
+    private static string PcmCachePath(string path)
+    {
+        return Path.Combine(PcmCacheDir, HashName(path) + ".pcm");
+    }
+
+    private static string HashName(string s)
+    {
+        uint h = 2166136261;
+        foreach (char c in s)
+        {
+            h ^= c;
+            h *= 16777619;
+        }
+        return h.ToString("X8");
+    }
+
+    // 主线程解析出该 clip 需要的文件路径；后台任务不再访问 ClipFiles，避免并发。
+    private static bool ResolveFiles(string path, out string? mainFile, out string? subFile, out bool isSeq)
+    {
+        mainFile = null;
+        subFile = null;
+        isSeq = path.EndsWith("#seq");
+        if (isSeq)
+        {
+            var basePath = path.Substring(0, path.Length - 4);
+            if (!MusicRegistry.ClipFiles.TryGetValue(basePath, out mainFile))
+                return false;
+            if (!MusicRegistry.ClipFiles.TryGetValue(basePath + "_sub", out subFile))
+                return false;
+            return true;
+        }
+        return MusicRegistry.ClipFiles.TryGetValue(path, out mainFile);
+    }
+
+    // 后台异步解码：解出 PCM 后由主线程 Pump 创建 AudioClip。
+    public static void EnsureClipAsync(string path)
+    {
+        if (MusicRegistry.Clips.ContainsKey(path))
+            return;
+        if (!ResolveFiles(path, out var mainFile, out var subFile, out var isSeq))
+            return;
+        lock (asyncLock)
+        {
+            if (pendingDecodes.Contains(path) || failedDecodes.Contains(path))
+                return;
+            pendingDecodes.Add(path);
+        }
+        System.Threading.Tasks.Task.Run(() =>
+        {
+            Pcm? pcm = null;
+            try
+            {
+                pcm = BuildPcm(path, mainFile!, subFile, isSeq);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError($"[MusicBox] Async decode failed {path}: {e}");
+            }
+            lock (asyncLock)
+            {
+                completedDecodes.Add(new KeyValuePair<string, Pcm?>(path, pcm));
+            }
+        });
+    }
+
+    // 主线程同步解码：用于非音乐室场景（战斗/地图覆盖），保证播放前就绪。
+    public static bool EnsureClipSync(string path)
     {
         if (MusicRegistry.Clips.ContainsKey(path))
             return true;
+        if (!ResolveFiles(path, out var mainFile, out var subFile, out var isSeq))
+            return false;
         try
         {
-            AudioClip? clip = null;
-            if (path.EndsWith("#seq"))
-            {
-                var basePath = path.Substring(0, path.Length - 4);
-                if (!MusicRegistry.ClipFiles.TryGetValue(basePath, out var mainFile))
-                    return false;
-                if (!MusicRegistry.ClipFiles.TryGetValue(basePath + "_sub", out var subFile))
-                    return false;
-                var main = DecodePcm(mainFile);
-                var sub = DecodePcm(subFile);
-                if (main == null)
-                    return false;
-                if (sub == null || sub.Channels != main.Channels || sub.SampleRate != main.SampleRate)
-                {
-                    clip = CreateClip(path, main);
-                }
-                else
-                {
-                    var data = new float[main.Data.Length + sub.Data.Length];
-                    Array.Copy(main.Data, 0, data, 0, main.Data.Length);
-                    Array.Copy(sub.Data, 0, data, main.Data.Length, sub.Data.Length);
-                    clip = CreateClip(path, new Pcm { Data = data, Channels = main.Channels, SampleRate = main.SampleRate });
-                }
-            }
-            else
-            {
-                if (!MusicRegistry.ClipFiles.TryGetValue(path, out var file))
-                    return false;
-                var pcm = DecodePcm(file);
-                if (pcm != null)
-                    clip = CreateClip(path, pcm);
-            }
-            if (clip != null)
-            {
-                MusicRegistry.Clips[path] = clip;
-                Diag.Log($"[MusicBox] Decoded ok: {path}");
-                return true;
-            }
+            var pcm = BuildPcm(path, mainFile!, subFile, isSeq);
+            if (pcm == null)
+                return false;
+            MusicRegistry.Clips[path] = CreateClip(path, pcm);
+            lock (asyncLock) { pendingDecodes.Remove(path); }
+            Diag.Log($"[MusicBox] Decoded (sync) {path}");
+            return true;
         }
         catch (Exception e)
         {
-            Plugin.Log.LogError($"[MusicBox] Failed to decode {path}: {e}");
+            Plugin.Log.LogError($"[MusicBox] Sync decode failed {path}: {e}");
+            return false;
         }
-        return false;
+    }
+
+    private static Pcm? BuildPcm(string path, string mainFile, string? subFile, bool isSeq)
+    {
+        if (!isSeq)
+            return DecodeFilePcm(path, mainFile);
+        var basePath = path.Substring(0, path.Length - 4);
+        var main = DecodeFilePcm(basePath, mainFile);
+        var sub = DecodeFilePcm(basePath + "_sub", subFile!);
+        if (main == null)
+            return null;
+        if (sub == null || sub.Channels != main.Channels || sub.SampleRate != main.SampleRate)
+            return main;
+        var data = new float[main.Data.Length + sub.Data.Length];
+        Array.Copy(main.Data, 0, data, 0, main.Data.Length);
+        Array.Copy(sub.Data, 0, data, main.Data.Length, sub.Data.Length);
+        return new Pcm { Data = data, Channels = main.Channels, SampleRate = main.SampleRate };
+    }
+
+    private static Pcm? DecodeFilePcm(string cacheKey, string file)
+    {
+        if (TryReadPcmCache(cacheKey, file, out var cached))
+            return cached;
+        var pcm = DecodePcm(file);
+        if (pcm != null)
+            WritePcmCache(cacheKey, file, pcm);
+        return pcm;
     }
 
     public static void EnsureClipsDecoded()
@@ -698,9 +780,113 @@ internal static class MusicPackLoader
         var keys = new List<string>(MusicRegistry.ClipFiles.Keys);
         foreach (var key in keys)
         {
-            EnsureClip(key);
+            EnsureClipAsync(key);
             if (!key.EndsWith("_sub") && MusicRegistry.ClipFiles.ContainsKey(key + "_sub"))
-                EnsureClip(key + "#seq");
+                EnsureClipAsync(key + "#seq");
+        }
+    }
+
+    // 主线程泵：把后台解好的 PCM 变成 AudioClip。
+    public static void Pump()
+    {
+        List<KeyValuePair<string, Pcm?>> done;
+        lock (asyncLock)
+        {
+            if (completedDecodes.Count == 0)
+                return;
+            done = new List<KeyValuePair<string, Pcm?>>(completedDecodes);
+            completedDecodes.Clear();
+        }
+        bool changed = false;
+        foreach (var kv in done)
+        {
+            lock (asyncLock) { pendingDecodes.Remove(kv.Key); }
+            if (kv.Value == null)
+            {
+                lock (asyncLock) { failedDecodes.Add(kv.Key); }
+                Plugin.Log.LogError($"[MusicBox] Failed to decode {kv.Key}");
+                continue;
+            }
+            if (MusicRegistry.Clips.ContainsKey(kv.Key))
+                continue;
+            try
+            {
+                MusicRegistry.Clips[kv.Key] = CreateClip(kv.Key, kv.Value);
+                changed = true;
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError($"[MusicBox] Create clip failed {kv.Key}: {e}");
+            }
+        }
+        if (changed)
+            MusicRoomRefresh.Refresh();
+    }
+
+    private static bool TryReadPcmCache(string path, string file, out Pcm? pcm)
+    {
+        pcm = null;
+        try
+        {
+            var cachePath = PcmCachePath(path);
+            if (!File.Exists(cachePath))
+                return false;
+            var info = new FileInfo(file);
+            if (!info.Exists)
+                return false;
+            using var fs = File.OpenRead(cachePath);
+            using var br = new BinaryReader(fs);
+            if (br.ReadInt32() != PCM_CACHE_MAGIC)
+                return false;
+            if (br.ReadInt32() != PCM_CACHE_VERSION)
+                return false;
+            int channels = br.ReadInt32();
+            int sampleRate = br.ReadInt32();
+            int sampleCount = br.ReadInt32();
+            long srcLength = br.ReadInt64();
+            long srcTicks = br.ReadInt64();
+            if (channels <= 0 || sampleRate <= 0 || sampleCount <= 0)
+                return false;
+            if (info.Length != srcLength || info.LastWriteTimeUtc.Ticks != srcTicks)
+                return false;
+            var bytes = br.ReadBytes(sampleCount * 4);
+            if (bytes.Length != sampleCount * 4)
+                return false;
+            var data = new float[sampleCount];
+            Buffer.BlockCopy(bytes, 0, data, 0, bytes.Length);
+            pcm = new Pcm { Data = data, Channels = channels, SampleRate = sampleRate };
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void WritePcmCache(string path, string file, Pcm pcm)
+    {
+        try
+        {
+            var info = new FileInfo(file);
+            if (!info.Exists)
+                return;
+            Directory.CreateDirectory(PcmCacheDir);
+            using var fs = File.Create(PcmCachePath(path));
+            using var bw = new BinaryWriter(fs);
+            bw.Write(PCM_CACHE_MAGIC);
+            bw.Write(PCM_CACHE_VERSION);
+            bw.Write(pcm.Channels);
+            bw.Write(pcm.SampleRate);
+            bw.Write(pcm.Data.Length);
+            bw.Write(info.Length);
+            bw.Write(info.LastWriteTimeUtc.Ticks);
+            var bytes = new byte[pcm.Data.Length * 4];
+            Buffer.BlockCopy(pcm.Data, 0, bytes, 0, bytes.Length);
+            bw.Write(bytes);
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogError($"[MusicBox] Write pcm cache failed {path}: {e}");
         }
     }
 
@@ -844,5 +1030,39 @@ internal static class MusicPackLoader
     private static string Escape(string s)
     {
         return s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+    }
+}
+
+// 解码完成后，若音乐室正在显示对应曲目，刷新其信息（例如把 ??：?? 更新为真实时长）。
+internal static class MusicRoomRefresh
+{
+    public static void Refresh()
+    {
+        try
+        {
+            var rooms = Resources.FindObjectsOfTypeAll<MVZ2.MusicRoom.MusicRoomController>();
+            if (rooms == null)
+                return;
+            for (int i = 0; i < rooms.Length; i++)
+            {
+                var room = rooms[i];
+                if (room == null || room.gameObject == null || !room.gameObject.activeInHierarchy)
+                    continue;
+                var list = room.musicList;
+                if (list == null || list.Count == 0)
+                    continue;
+                var cur = room.currentMusicId;
+                if (cur == null)
+                    continue;
+                int index = list.IndexOf(cur);
+                if (index < 0)
+                    continue;
+                room.DisplayMusic(index);
+            }
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogError($"[MusicBox] Music room refresh failed: {e}");
+        }
     }
 }

@@ -77,12 +77,29 @@ internal static class GetMusicClipPatch
     {
         if (path != null && path.SpaceName == MusicRegistry.Namespace)
         {
-            MusicPackLoader.EnsureClip(path.Path);
+            if (!MusicRegistry.Clips.ContainsKey(path.Path))
+                MusicPackLoader.EnsureClipAsync(path.Path);
             MusicRegistry.Clips.TryGetValue(path.Path, out var clip);
             __result = clip!;
             return false;
         }
         return true;
+    }
+}
+
+[HarmonyPatch(typeof(MVZ2.Audios.MusicManager), nameof(MVZ2.Audios.MusicManager.Update))]
+internal static class MusicManagerUpdatePumpPatch
+{
+    private static void Postfix()
+    {
+        try
+        {
+            MusicPackLoader.Pump();
+        }
+        catch (System.Exception e)
+        {
+            Plugin.Log.LogError($"[MusicBox] Pump failed: {e}");
+        }
     }
 }
 
