@@ -1,0 +1,31 @@
+{
+  "en-US": {
+    "音乐包": "Music Packs",
+    "已安装": "Installed",
+    "包：{0}": "Pack: {0}",
+    "作者：{0}": "Author: {0}",
+    "来源：{0}": "Source: {0}",
+    "更上方的音乐包会在音乐室中更靠前显示。": "Music packs higher in the list appear earlier in the Music Room.",
+    "是否删除音乐包“{0}”？": "Delete the music pack \"{0}\"?",
+
+    "战斗音乐": "Battle Music",
+    "没有找到可配置的章节。": "No configurable chapters found.",
+    "确定": "OK",
+    "取消": "Cancel",
+    "选择章节": "Select a chapter",
+    "章节音乐（{0}）：{1}": "Chapter music ({0}): {1}",
+    "地图音乐（{0}）：{1}": "Map music ({0}): {1}",
+    "{0} 阶段{1}：{2}": "{0} Phase {1}: {2}",
+    "返回": "Back",
+    "{0} · 选择要设置的项": "{0} · Choose an item to set",
+    "章节音乐": "Chapter Music",
+    "地图音乐": "Map Music",
+    "{0} 阶段{1}": "{0} Phase {1}",
+    "原版（本章地图音乐）": "Vanilla (this chapter's map music)",
+    "原版（本章音乐）": "Vanilla (this chapter's music)",
+    "原版（原阶段音乐）": "Vanilla (original phase music)",
+    "为「{0}」选择音乐": "Choose music for \"{0}\"",
+    "原版": "Vanilla",
+    "{0}（原版）": "{0} (Vanilla)"
+  }
+}

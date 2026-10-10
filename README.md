@@ -1,3 +1,5 @@
+Language: English | [简体中文](README.zh-CN.md)
+
 # MusicBox
 
 ![Vibe Coding](https://img.shields.io/badge/Vibe%20Coding-100%25-blueviolet)
@@ -6,6 +8,8 @@ A BepInEx 6 (IL2CPP) music expansion mod for **MVZ2 (Minecraft VS Zombies 2) / M
 
 It lets players add custom music packs, always shows the Music Room, and customizes level / map background music per scene.
 
+> **Since v1.2, this mod requires [LanguagePackEnhance](https://github.com/Alhugh233/MVZ2-LPE) (LPE) at runtime.** v1.1 and earlier work standalone.
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -13,6 +17,7 @@ It lets players add custom music packs, always shows the Music Room, and customi
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
+- [Localization](#localization)
 - [Data Format](#data-format)
 - [Building from Source](#building-from-source)
 - [Compatibility](#compatibility)
@@ -50,14 +55,15 @@ This project is developed with **Vibe Coding**: the code and documentation are w
 ## Installation
 
 1. Make sure the game has **BepInEx 6 (IL2CPP)** installed.
-2. Copy the following 4 DLLs into `BepInEx/plugins/` (same folder):
+2. Install **[LanguagePackEnhance](https://github.com/Alhugh233/MVZ2-LPE)** (hard dependency). MusicBox routes its own UI text and custom-track metadata through it for localization.
+3. Copy the following 4 DLLs into `BepInEx/plugins/` (same folder):
 
    - `MusicBox.dll`
    - `NVorbis.dll`
    - `Concentus.dll`
    - `Concentus.Oggfile.dll`
 
-3. Start the game. If the log shows `Plugin com.mvz2.musicbox is loaded!`, installation succeeded.
+4. Start the game. If the log shows `Plugin com.mvz2.musicbox is loaded!`, installation succeeded.
 
 ## Usage
 
@@ -90,6 +96,18 @@ Enter the **Music Room** and click the map-options-styled button to open the con
 3. choose either the original track or a custom track.
 
 Each slot can only be the **original music of that scene** or **a custom track**; you cannot pick built-in music from other scenes.
+
+## Localization
+
+MusicBox integrates with **[LanguagePackEnhance](https://github.com/Alhugh233/MVZ2-LPE)** (LPE). Two kinds of text are localized:
+
+1. **MusicBox's own UI text** (buttons, headers, hints, dialogs): shipped as an embedded LPE language pack (`en-US`). Third-party language packs (which have higher priority than a mod's own pack) can translate/override these, so a translator only needs a language pack containing the mod's source strings.
+
+2. **Custom-track metadata** shown in the Music Room and in MusicBox's own pages (name / description / author / source / origin): taken from each music pack's own `languages/<lang>.json` (see [Data Format](#data-format)). MusicBox registers these with LPE at load time, and the game looks them up through the same `music.*` localization contexts used for the vanilla tracks. Missing translations fall back to the original text.
+
+Lookup priority everywhere: **imported third-party language pack > mod's own pack > game built-in > original text**.
+
+> New to language packs? See the official template & tutorial: **Cuerzor/MVZ2LanguagePack** — <https://github.com/Cuerzor/MVZ2LanguagePack>.
 
 ## Data Format
 
@@ -142,6 +160,37 @@ Field reference:
 | `subFile` | no | Sub track file, must be `.ogg` |
 | `source` / `origin` / `author` / `description` | no | Music Room info and review text |
 
+### languages/&lt;lang&gt;.json (optional)
+
+Each music pack can ship translations for its tracks, **one file per language**, under a `languages/` folder:
+
+```
+music_packs/<pack name>/
+    pack.json
+    songs.json
+    languages/
+        en-US.json
+        ja-JP.json
+    *.ogg
+```
+
+```json
+{
+    "song_1": {
+        "name": "Track name (translated)",
+        "description": "Review text (translated)",
+        "author": "Author",
+        "source": "Source",
+        "origin": "Original"
+    }
+}
+```
+
+- Keys are the song `id`s from `songs.json`; each field is optional (only listed fields are translated).
+- The Chinese values in `songs.json` are the source strings; the `languages/<lang>.json` files supply translations.
+- `zh-Hans` can be omitted (it falls back to the source text).
+- These translations are registered through LPE's `music.name` / `music.description` / `music.author` / `music.source` / `music.origin` contexts.
+
 ### battle_music.json
 
 Written and read automatically by the mod UI (stored at `music_packs/battle_music.json`); players normally do not need to edit it:
@@ -165,7 +214,9 @@ Requirements: `.NET SDK` (target `net6.0`).
 
 1. Put the game **interop DLLs** for the target version into the repo's `interop/` folder (this folder is `.gitignore`d), or specify it at build time with `-p:InteropDir=`.
 
-2. Build:
+2. The thin API `LanguagePackEnhance.API.dll` used for compilation lives in `libs/` (vendored). Replace it with a newer build of LanguagePackEnhance.API if needed, or pass `-p:LpeDir=`.
+
+3. Build:
 
 ```bash
 dotnet build
@@ -181,17 +232,19 @@ Output is in `bin/Debug/net6.0/`. Deploy `MusicBox.dll`, `NVorbis.dll`, `Concent
 - `BepInEx.Unity.IL2CPP`, `BepInEx.PluginInfoProps`
 - `NVorbis` (Vorbis decoding)
 - `Concentus.Oggfile` / `Concentus` (Opus decoding)
+- **[LanguagePackEnhance](https://github.com/Alhugh233/MVZ2-LPE)** (runtime hard dependency). Compile time references the thin API `LanguagePackEnhance.API.dll` ([MVZ2-LPEAPI](https://github.com/Alhugh233/MVZ2-LPEAPI)) from `libs/`.
 
 ## Compatibility
 
 - Target framework: `net6.0` (BepInEx 6 IL2CPP / CoreCLR).
 - Plugin GUID: `com.mvz2.musicbox`.
+- Depends on **LanguagePackEnhance** (`com.mvz2.languagepackenhance`).
 - **Vanilla and Expand**: comparing both interops, every type / member MusicBox uses has **identical signatures**, the interop assemblies share the same simple names, and BepInEx binds by name; therefore **a single DLL should work on both for the same build**. Version-specific content differences (e.g. the `_15` Boss stage that only exists in Expand) are handled by runtime enumeration.
 - **Note: only the Expand build has been tested on a real device; vanilla has not been tested yet.**
 
 ## Known Limitations
 
-- **Only the game's default language (Simplified Chinese) is supported; the mod does not support I18N yet.**
+- MusicBox's own UI text is localized through LanguagePackEnhance (embedded `en-US` shipped); custom-track metadata is only localized if the music pack provides `languages/<lang>.json` (or a third-party language pack translates the `music.*` contexts).
 - The Boss phase track table is maintained statically; new bosses in the game require updating it.
 - In non-Music-Room scenes (battle / map), the required custom track is decoded synchronously before playback; on a fresh install without a warm disk cache this may block briefly the first time. The Music Room decodes in the background and refreshes the shown track info once ready (e.g. `??:??` -> real duration).
 - Music pack icons (`pack.png`) are not supported yet.
@@ -203,20 +256,26 @@ Output is in `bin/Debug/net6.0/`. Deploy `MusicBox.dll`, `NVorbis.dll`, `Concent
 
 ```
 MusicBox/
-  Plugin.cs                     Plugin entry: Harmony, injects MusicBoxBehaviour
+  Plugin.cs                     Plugin entry: Harmony, injects MusicBoxBehaviour, registers the embedded language pack
   MusicBoxBehaviour.cs          Injected MonoBehaviour (fallback startup driver)
-  Core/MusicCore.cs             Core: MiniJson, registry, music pack loading/validation/decoding
+  Core/MusicCore.cs             Core: MiniJson, registry, music pack loading/validation/decoding + cache pruning
+  Core/Loc.cs                   Localization helper (LPE Translate / game _p)
+  Core/MusicLocalization.cs     Reads each pack's languages/<lang>.json and registers them with LPE
+  Resources/MusicBox.lang.json  Embedded LPE language pack (en-US) for MusicBox's own UI text
   Patches/MusicHooks.cs         Music-related Harmony patches
   Patches/StartupLoadPatch.cs   Loads packs and battle config at startup
   Addons/MusicPacksPage.cs      "Music Pack" button + management page in the Addons screen
   Battle/BattleMusic.cs         Battle/map BGM config data + dynamic enumeration + runtime resolution
   Battle/BattleMusicPage.cs     Music Room config button + custom dialog
+  libs/LanguagePackEnhance.API.dll  Compile-time reference to the thin API (vendored)
 ```
 
 ### Main logic
 
 - **Startup**: `Plugin.Load` applies Harmony and registers the injected type; `Patches/StartupLoadPatch.cs` loads music packs and battle config after `MainManager.Initialize`.
 - **Music packs**: `MusicPackLoader.Reload` scans / parses / validates (whole-pack rejection) and registers `MusicMeta` plus audio file paths. Audio is decoded **asynchronously** on background threads (OGG -> PCM, with a persistent on-disk PCM cache keyed by source file size + mtime), and the AudioClip is created on the main thread by a pump (`MusicManager.Update`). For non-Music-Room scenes (battle / map overrides), the required track is decoded synchronously before playback to guarantee it is ready.
+- **Localization**: MusicBox depends on **LanguagePackEnhance**. Its own UI text is shipped as an embedded LPE pack and looked up via `Loc.T` (`LanguagePackEnhanceApi.Translate`); custom-track metadata is read from each pack's `languages/<lang>.json` and registered with LPE (`LanguagePackEnhanceApi.RegisterTranslations`), and is then resolved by the game's own `music.*` localization contexts. All insertions are made into the game's loaded-pack list below third-party packs and above the built-in pack.
+- **Cache pruning**: on every `Reload`, `PruneCache` deletes orphaned cache entries — PCM cache files that no longer correspond to a loaded clip, and extracted `.zip` pack directories for packs that were removed.
 - **Game integration**: patches to `ResourceManager.GetAllMusicID/GetMusicMeta/GetMusicClip` bring custom tracks into the Music Room; `LogicSaveExt.IsMusicRoomUnlocked` always returns `true` to keep the Music Room visible.
 - **Battle / map BGM**: `BattleMusic` enumerates chapters / Boss stages / map presets at runtime and resolves the custom track for the current scene. When overriding, the **playing ID is not changed**; instead, during the `MusicManager.Play`/`SetPlayingMusic` call the meta for that ID is temporarily redirected to the custom track, so the game's own logic (e.g. Dream/Nightmare switching) keeps working.
 - **Dual track**: for map BGM, the main and sub track PCM is concatenated into one looping AudioClip during decoding.
@@ -257,6 +316,7 @@ Others:
 
 - **MVZ2 (original game)** by Cuerzor — <https://github.com/Cuerzor/MinecraftVsZombies2Unity>
 - **MVZ2Expand** by Tr-DESE107 — <https://github.com/Tr-DESE107/MinecraftVsZombies2_EXPAND>
+- **LanguagePackEnhance** by Alhugh233 — mod localization framework.
 - Framework: BepInEx.
 - Decoders: NVorbis (Vorbis), Concentus (Opus).
 

@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
@@ -79,8 +78,10 @@ internal static class MusicPacksPage
     private static AddonsController? addons;
     private static GameObject? pageGo;
     private static LanguagePacksUI? pageUi;
+    private static TMP_Text? hintText;
     private static readonly List<string> orderedSongs = new List<string>();
     private static int selectedIndex = -1;
+    private const string HINT_KEY = "更上方的音乐包会在音乐室中更靠前显示。";
 
     public static void Install(AddonsController controller)
     {
@@ -101,7 +102,7 @@ internal static class MusicPacksPage
             var translator = tmpLabel.GetComponent<TextMeshProUGUITranslator>();
             if (translator != null)
                 translator.enabled = false;
-            tmpLabel.text = "音乐包";
+            tmpLabel.text = Loc.T("音乐包");
             Diag.Log("[MusicBox] Music pack button label set via TMP_Text.");
         }
         else
@@ -109,7 +110,7 @@ internal static class MusicPacksPage
             var uiLabel = clone.GetComponentInChildren<UnityEngine.UI.Text>(true);
             if (uiLabel != null)
             {
-                uiLabel.text = "音乐包";
+                uiLabel.text = Loc.T("音乐包");
                 Diag.Log("[MusicBox] Music pack button label set via UI.Text.");
             }
             else
@@ -186,19 +187,42 @@ internal static class MusicPacksPage
 
         var titleGo = FindDescendant(pageGo.transform, "Title");
         if (titleGo != null)
-            SetTmpText(titleGo, "音乐包");
+            SetTmpText(titleGo, Loc.T("音乐包"));
 
         var enabledGo = FindAncestor(pageUi.enabledLanguagePacks.transform, "Enabled");
         if (enabledGo != null)
         {
             var headerGo = FindChild(enabledGo.transform, "Text");
             if (headerGo != null)
-                SetTmpText(headerGo, "已安装");
+                SetTmpText(headerGo, Loc.T("已安装"));
         }
 
         ReplaceLanguagePackHints();
 
         pageGo.SetActive(false);
+    }
+
+    private static void RelocalizePage()
+    {
+        if (pageGo == null)
+            return;
+
+        var titleGo = FindDescendant(pageGo.transform, "Title");
+        if (titleGo != null)
+            SetTmpText(titleGo, Loc.T("音乐包"));
+
+        if (pageUi != null)
+        {
+            var enabledGo = FindAncestor(pageUi.enabledLanguagePacks.transform, "Enabled");
+            if (enabledGo != null)
+            {
+                var headerGo = FindChild(enabledGo.transform, "Text");
+                if (headerGo != null)
+                    SetTmpText(headerGo, Loc.T("已安装"));
+            }
+        }
+
+        ReplaceLanguagePackHints();
     }
 
     private static void OpenPage()
@@ -214,6 +238,7 @@ internal static class MusicPacksPage
             Diag.Log("[MusicBox] OpenPage: page ready.");
             if (pageGo == null)
                 return;
+            RelocalizePage();
             CloningMusicPage = true;
             try
             {
@@ -257,17 +282,17 @@ internal static class MusicPacksPage
             var pack = MusicRegistry.SongToPack.TryGetValue(path, out var p) ? p : null;
             var vd = new LanguagePackViewData
             {
-                name = meta?.Name ?? path,
+                name = meta != null ? Loc.MusicName(meta.Name) : path,
             };
             var parts = new List<string>();
             if (pack != null && !string.IsNullOrEmpty(pack.Name))
-                parts.Add($"包：{pack.Name}");
+                parts.Add(Loc.T("包：{0}", pack.Name));
             if (meta != null)
             {
                 if (!string.IsNullOrEmpty(meta.Author))
-                    parts.Add($"作者：{meta.Author}");
+                    parts.Add(Loc.T("作者：{0}", Loc.MusicAuthor(meta.Author)));
                 if (!string.IsNullOrEmpty(meta.Source))
-                    parts.Add($"来源：{meta.Source}");
+                    parts.Add(Loc.T("来源：{0}", Loc.MusicSource(meta.Source)));
             }
             vd.description = string.Join("\n", parts);
             viewDatas[i] = vd;
@@ -381,23 +406,30 @@ internal static class MusicPacksPage
     {
         if (pageGo == null)
             return;
-        var tmps = pageGo.GetComponentsInChildren<TMP_Text>(true);
-        for (int i = 0; i < tmps.Length; i++)
+        if (hintText == null)
         {
-            var t = tmps[i];
-            if (t == null)
-                continue;
-            var s = t.text;
-            if (string.IsNullOrEmpty(s))
-                continue;
-            if (s.Contains("语言包") && (s.Contains("更上方") || s.Contains("优先")))
+            var tmps = pageGo.GetComponentsInChildren<TMP_Text>(true);
+            for (int i = 0; i < tmps.Length; i++)
             {
-                var translator = t.GetComponent<TextMeshProUGUITranslator>();
-                if (translator != null)
-                    translator.enabled = false;
-                t.text = "更上方的音乐包会在音乐室中更靠前显示。";
+                var t = tmps[i];
+                if (t == null)
+                    continue;
+                var s = t.text;
+                if (string.IsNullOrEmpty(s))
+                    continue;
+                if (s.Contains("语言包") && (s.Contains("更上方") || s.Contains("优先")))
+                {
+                    hintText = t;
+                    break;
+                }
             }
         }
+        if (hintText == null)
+            return;
+        var translator = hintText.GetComponent<TextMeshProUGUITranslator>();
+        if (translator != null)
+            translator.enabled = false;
+        hintText.text = Loc.T(HINT_KEY);
     }
 
     private static void OnButtonClick(LanguagePacksUI.Buttons button)
@@ -512,7 +544,7 @@ internal static class MusicPacksPage
         if (!MusicRegistry.SongToPack.TryGetValue(path, out var pack))
             return;
         var title = MainManager.Instance.LanguageManager._(MVZ2Logic.Localization.LogicStrings.WARNING);
-        var desc = $"是否删除音乐包“{pack.Name}”？";
+        var desc = Loc.T("是否删除音乐包“{0}”？", pack.Name);
         var action = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<bool>>(new Action<bool>(result =>
         {
             if (result)

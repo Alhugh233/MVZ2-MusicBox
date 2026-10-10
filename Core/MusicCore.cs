@@ -371,6 +371,11 @@ internal static class MusicPackLoader
         Diag.Log($"[MusicBox] Reload built. {packs.Count} pack(s), {allMainPaths.Count} song(s).");
         Diag.Log($"[MusicBox] Loaded {packs.Count} music pack(s), {allMainPaths.Count} song(s).");
 
+        MusicLocalization.RegisterAll();
+
+        // 清理已被删除的音乐包遗留的缓存。
+        PruneCache();
+
         // 启动/重载后即后台预解码全部曲目（含双轨 #seq）。
         EnsureClipsDecoded();
     }
@@ -673,6 +678,64 @@ internal static class MusicPackLoader
             h *= 16777619;
         }
         return h.ToString("X8");
+    }
+
+    // 清理已被删除的音乐包遗留的缓存（PCM 缓存文件、zip 解压目录）。
+    private static void PruneCache()
+    {
+        try
+        {
+            // PCM 缓存：只保留当前所有 clip 路径对应的文件。
+            var validFiles = new HashSet<string>();
+            foreach (var key in MusicRegistry.ClipFiles.Keys)
+                validFiles.Add(HashName(key) + ".pcm");
+            if (Directory.Exists(PcmCacheDir))
+            {
+                foreach (var file in Directory.GetFiles(PcmCacheDir, "*.pcm"))
+                {
+                    if (validFiles.Contains(Path.GetFileName(file)))
+                        continue;
+                    try
+                    {
+                        File.Delete(file);
+                    }
+                    catch (Exception e)
+                    {
+                        Diag.Log($"[MusicBox] Cannot delete stale pcm '{file}': {e.Message}");
+                    }
+                }
+            }
+
+            // zip 解压目录：只保留当前 zip 包对应的目录（"pcm" 除外）。
+            var cacheDir = MusicRegistry.CacheDir;
+            if (Directory.Exists(cacheDir))
+            {
+                var validDirs = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var pack in MusicRegistry.Packs.Values)
+                {
+                    if (pack.IsZip)
+                        validDirs.Add(pack.Key);
+                }
+                foreach (var dir in Directory.GetDirectories(cacheDir))
+                {
+                    var name = Path.GetFileName(dir);
+                    if (name == "pcm" || validDirs.Contains(name))
+                        continue;
+                    try
+                    {
+                        Directory.Delete(dir, true);
+                    }
+                    catch (Exception e)
+                    {
+                        Diag.Log($"[MusicBox] Cannot delete stale cache dir '{dir}': {e.Message}");
+                    }
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogError($"[MusicBox] Prune cache failed: {e}");
+        }
     }
 
     // 主线程解析出该 clip 需要的文件路径；后台任务不再访问 ClipFiles，避免并发。

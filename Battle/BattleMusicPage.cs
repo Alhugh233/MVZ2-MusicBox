@@ -172,14 +172,14 @@ internal static class BattleMusicUI
             var chapters = BattleMusic.EnumerateChapters();
             if (chapters.Count == 0)
             {
-                Show("战斗音乐", "没有找到可配置的章节。", new List<string> { "确定" }, _ => { });
+                Show(Loc.T("战斗音乐"), Loc.T("没有找到可配置的章节。"), new List<string> { Loc.T("确定") }, _ => { });
                 return;
             }
             var options = new List<string>();
             foreach (var c in chapters)
                 options.Add(c.Name);
-            options.Add("取消");
-            Show("战斗音乐", "选择章节", options, i =>
+            options.Add(Loc.T("取消"));
+            Show(Loc.T("战斗音乐"), Loc.T("选择章节"), options, i =>
             {
                 if (i < 0 || i >= chapters.Count)
                     return;
@@ -198,12 +198,12 @@ internal static class BattleMusicUI
         var slotKeys = new List<string>();
         foreach (var bm in chapter.BattleMusics)
         {
-            options.Add($"章节音乐（{MainManager.Instance.ResourceManager.GetMusicName(bm)}）：{CurrentBattle(bm)}");
+            options.Add(Loc.T("章节音乐（{0}）：{1}", MainManager.Instance.ResourceManager.GetMusicName(bm), CurrentBattle(bm)));
             slotKeys.Add("B|" + BattleMusic.Key(bm));
         }
         foreach (var preset in chapter.MapPresets)
         {
-            options.Add($"地图音乐（{preset.Id}）：{CurrentMapPreset(preset.Music)}");
+            options.Add(Loc.T("地图音乐（{0}）：{1}", preset.Id, CurrentMapPreset(preset.Music)));
             slotKeys.Add("MAP|" + BattleMusic.Key(preset.Music));
         }
         foreach (var boss in chapter.BossStages)
@@ -211,29 +211,29 @@ internal static class BattleMusicUI
             var phases = BattleMusic.GetBossPhaseKeys(boss);
             for (int p = 0; p < phases.Length; p++)
             {
-                options.Add($"{boss.Path} 阶段{p + 1}：{CurrentStage(boss, p)}");
+                options.Add(Loc.T("{0} 阶段{1}：{2}", boss.Path, p + 1, CurrentStage(boss, p)));
                 slotKeys.Add($"{BattleMusic.Key(boss)}|{p}");
             }
         }
-        options.Add("返回");
-        Show("战斗音乐", $"{chapter.Name} · 选择要设置的项", options, i =>
+        options.Add(Loc.T("返回"));
+        Show(Loc.T("战斗音乐"), Loc.T("{0} · 选择要设置的项", chapter.Name), options, i =>
         {
             if (i < 0 || i >= slotKeys.Count)
                 return;
             var key = slotKeys[i];
             if (key.StartsWith("B|"))
             {
-                PickMusic(key.Substring(2), -1, "章节音乐", () => OpenChapter(chapter));
+                PickMusic(key.Substring(2), -1, Loc.T("章节音乐"), () => OpenChapter(chapter));
             }
             else if (key.StartsWith("MAP|"))
             {
-                PickMusic(key.Substring(4), -2, "地图音乐", () => OpenChapter(chapter));
+                PickMusic(key.Substring(4), -2, Loc.T("地图音乐"), () => OpenChapter(chapter));
             }
             else
             {
                 var parts = key.Split('|');
                 int phase = int.Parse(parts[1]);
-                PickMusic(parts[0], phase, $"{parts[0]} 阶段{phase + 1}", () => OpenChapter(chapter));
+                PickMusic(parts[0], phase, Loc.T("{0} 阶段{1}", parts[0], phase + 1), () => OpenChapter(chapter));
             }
         });
     }
@@ -242,14 +242,14 @@ internal static class BattleMusicUI
     {
         var options = new List<string>();
         if (phase == -2)
-            options.Add("原版（本章地图音乐）");
+            options.Add(Loc.T("原版（本章地图音乐）"));
         else if (phase < 0)
-            options.Add("原版（本章音乐）");
+            options.Add(Loc.T("原版（本章音乐）"));
         else
-            options.Add("原版（原阶段音乐）");
+            options.Add(Loc.T("原版（原阶段音乐）"));
         options.AddRange(customNames);
-        options.Add("返回");
-        Show("战斗音乐", $"为「{label}」选择音乐", options, i =>
+        options.Add(Loc.T("返回"));
+        Show(Loc.T("战斗音乐"), Loc.T("为「{0}」选择音乐", label), options, i =>
         {
             if (i == 0)
                 Assign(key, phase, null);
@@ -301,7 +301,7 @@ internal static class BattleMusicUI
             if (id != null)
                 return res.GetMusicName(id);
         }
-        return "原版";
+        return Loc.T("原版");
     }
 
     private static string CurrentMapPreset(PVZEngine.NamespaceID music)
@@ -313,7 +313,7 @@ internal static class BattleMusicUI
             if (id != null)
                 return res.GetMusicName(id);
         }
-        return res.GetMusicName(music) + "（原版）";
+        return Loc.T("{0}（原版）", res.GetMusicName(music));
     }
 
     private static string CurrentStage(PVZEngine.NamespaceID stage, int phase)
@@ -325,6 +325,6 @@ internal static class BattleMusicUI
             if (id != null)
                 return MainManager.Instance.ResourceManager.GetMusicName(id);
         }
-        return "原版";
+        return Loc.T("原版");
     }
 }

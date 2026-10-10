@@ -4,7 +4,7 @@
     <TargetFramework>net6.0</TargetFramework>
     <AssemblyName>MusicBox</AssemblyName>
     <Product>MusicBox</Product>
-    <Version>1.0.0</Version>
+    <Version>1.2.0</Version>
     <BepInExPluginGuid>com.mvz2.musicbox</BepInExPluginGuid>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
@@ -16,7 +16,21 @@
     </RestoreAdditionalProjectSources>
     <RootNamespace>MusicBox</RootNamespace>
     <InteropDir Condition="'$(InteropDir)' == ''">$(MSBuildThisFileDirectory)interop</InteropDir>
+    <LpeDir Condition="'$(LpeDir)' == ''">$(MSBuildThisFileDirectory)libs</LpeDir>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="LanguagePackEnhance.API">
+      <HintPath>$(LpeDir)/LanguagePackEnhance.API.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\MusicBox.lang.json">
+      <LogicalName>MusicBox.lang.json</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="BepInEx.Unity.IL2CPP" Version="6.0.0-be.*" IncludeAssets="compile" />
