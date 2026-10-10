@@ -28,6 +28,7 @@ internal static class BattleMusic
         { "mvz2:halloween_11", new[] { "mvz2:ultimate_battle", "mvz2:halloween_boss" } },
         { "mvz2:halloween_15", new[] { "mvz2:ultimate_battle", "mvz2:halloween_boss" } },
         { "mvz2:dream_11", new[] { "mvz2:nightmare_final", "mvz2:nightmare_boss", "mvz2:nightmare_boss2" } },
+        { "mvz2:castle_7", new[] { "mvz2:seija" } },
         { "mvz2:castle_11", new[] { "mvz2:castle_final", "mvz2:wither_boss" } },
         { "mvz2:castle_15", new[] { "mvz2:castle_final", "mvz2:seija" } },
         { "mvz2:mausoleum_11", new[] { "mvz2:mausoleum_final", "mvz2:mausoleum_boss", "mvz2:mausoleum_boss_2" } },
@@ -50,6 +51,12 @@ internal static class BattleMusic
     public static string[] GetBossPhaseKeys(NamespaceID stageID)
     {
         return BossPhases.TryGetValue(Key(stageID), out var arr) ? arr : Array.Empty<string>();
+    }
+
+    // 是否为「按 boss 相位处理」的关卡：普通 boss 关，或带相位表的其它类型关（如 castle_7 的 special）。
+    public static bool HasBossPhases(NamespaceID stageID)
+    {
+        return BossPhases.ContainsKey(Key(stageID));
     }
 
     public sealed class MapPresetInfo
@@ -128,7 +135,7 @@ internal static class BattleMusic
                 {
                     if (st == null || !NamespaceID.IsValid(st.stage))
                         continue;
-                    if (typeDict.TryGetValue(st.stage.Path, out var type) && type == "boss")
+                    if (typeDict.TryGetValue(st.stage.Path, out var type) && (type == "boss" || HasBossPhases(st.stage)))
                         chapter.BossStages.Add(st.stage);
                 }
             }
@@ -269,28 +276,29 @@ internal static class BattleMusic
             if (stageDef == null)
                 return false;
             var type = LogicStageProps.GetStageType(stageDef);
-            if (type != "normal" && type != "boss")
-                return false;
             var stageKey = Key(stageDef.GetID());
+            bool bossLike = type == "boss" || HasBossPhases(stageDef.GetID());
+            if (type != "normal" && !bossLike)
+                return false;
             Diag.Log($"[MusicBox] Level music {Key(requested)} stage={stageKey} type={type} area={Key(level.AreaDefinition.GetID())} hasAreaKey={AreaMusic.ContainsKey(Key(requested))}");
 
-            if (type == "boss")
+            if (bossLike && BossPhases.TryGetValue(stageKey, out var phases))
             {
-                if (!BossPhases.TryGetValue(stageKey, out var phases))
-                    return false;
                 int slot = IndexOf(phases, Key(requested));
-                if (slot < 0)
+                // 仅当请求的曲目属于该关相位表时才按相位处理；否则回落到章节音乐。
+                if (slot >= 0)
+                {
+                    if (!StageSlots.TryGetValue(stageKey, out var list) || slot >= list.Count)
+                        return false;
+                    var id = Parse(list[slot]);
+                    if (!NamespaceID.IsValid(id))
+                        return false;
+                    result = id;
+                    if (Prepare(result))
+                        return true;
+                    result = null;
                     return false;
-                if (!StageSlots.TryGetValue(stageKey, out var list) || slot >= list.Count)
-                    return false;
-                var id = Parse(list[slot]);
-                if (!NamespaceID.IsValid(id))
-                    return false;
-                result = id;
-                if (Prepare(result))
-                    return true;
-                result = null;
-                return false;
+                }
             }
 
             if (!AreaMusic.TryGetValue(Key(requested), out var value))
