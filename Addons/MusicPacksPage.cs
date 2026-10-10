@@ -79,6 +79,9 @@ internal static class MusicPacksPage
     private static GameObject? pageGo;
     private static LanguagePacksUI? pageUi;
     private static TMP_Text? hintText;
+    private static TMP_Text? buttonLabelTmp;
+    private static UnityEngine.UI.Text? buttonLabelUi;
+    private static Il2CppSystem.Action<string>? languageChangedDelegate;
     private static readonly List<string> orderedSongs = new List<string>();
     private static int selectedIndex = -1;
     private const string HINT_KEY = "更上方的音乐包会在音乐室中更靠前显示。";
@@ -102,7 +105,8 @@ internal static class MusicPacksPage
             var translator = tmpLabel.GetComponent<TextMeshProUGUITranslator>();
             if (translator != null)
                 translator.enabled = false;
-            tmpLabel.text = Loc.T("音乐包");
+            buttonLabelTmp = tmpLabel;
+            buttonLabelUi = null;
             Diag.Log("[MusicBox] Music pack button label set via TMP_Text.");
         }
         else
@@ -110,7 +114,8 @@ internal static class MusicPacksPage
             var uiLabel = clone.GetComponentInChildren<UnityEngine.UI.Text>(true);
             if (uiLabel != null)
             {
-                uiLabel.text = Loc.T("音乐包");
+                buttonLabelUi = uiLabel;
+                buttonLabelTmp = null;
                 Diag.Log("[MusicBox] Music pack button label set via UI.Text.");
             }
             else
@@ -118,6 +123,8 @@ internal static class MusicPacksPage
                 Plugin.Log.LogWarning("[MusicBox] Music pack button label not found.");
             }
         }
+        ApplyButtonLabel();
+        HookLanguageChange();
         var button = clone.GetComponent<Button>();
         if (button != null)
         {
@@ -126,6 +133,38 @@ internal static class MusicPacksPage
             button.onClick.AddListener(DelegateSupport.ConvertDelegate<UnityAction>(new Action(OpenPage)));
         }
         Diag.Log("[MusicBox] Addons music pack button installed.");
+    }
+
+    private static void ApplyButtonLabel()
+    {
+        var text = Loc.T("音乐包");
+        if (buttonLabelTmp != null)
+            buttonLabelTmp.text = text;
+        else if (buttonLabelUi != null)
+            buttonLabelUi.text = text;
+    }
+
+    private static void HookLanguageChange()
+    {
+        if (languageChangedDelegate != null)
+            return;
+        try
+        {
+            var languageManager = MainManager.Instance?.LanguageManager;
+            if (languageManager == null)
+                return;
+            languageChangedDelegate = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<string>>(new Action<string>(OnLanguageChanged));
+            languageManager.OnLanguageChanged += languageChangedDelegate;
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogError($"[MusicBox] Hook language change failed: {e}");
+        }
+    }
+
+    private static void OnLanguageChanged(string language)
+    {
+        ApplyButtonLabel();
     }
 
     private static void EnsurePage()
