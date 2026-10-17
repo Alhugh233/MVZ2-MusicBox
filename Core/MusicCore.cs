@@ -9,6 +9,7 @@ using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Concentus.Oggfile;
 using Concentus.Structs;
 using MVZ2.Metas;
+using NLayer;
 using NVorbis;
 using PVZEngine;
 using UnityEngine;
@@ -55,13 +56,250 @@ public class LoadedSong
 public class MusicPack
 {
     public string Key = string.Empty;
-    public string RootDir = string.Empty;
+    public PackContent Content = new PackContent();
     public string SourcePath = string.Empty;
     public bool IsZip;
     public string Name = string.Empty;
     public string Author = string.Empty;
     public string Description = string.Empty;
     public List<LoadedSong> Songs = new List<LoadedSong>();
+}
+
+/// <summary>一条 clip 的来源（文件夹里的文件，或 zip 里的条目）。</summary>
+public sealed class ClipSource
+{
+    public PackContent Content = new PackContent();
+    public string RelativePath = string.Empty;
+}
+
+/// <summary>
+/// 统一的音乐包内容访问：文件夹直接读文件，zip 直接读条目（不再解压到磁盘）。
+/// </summary>
+public sealed class PackContent
+{
+    public string SourcePath = string.Empty;
+    public bool IsZip;
+    public string Prefix = string.Empty;
+
+    public string FullPath(string relativePath)
+    {
+        return Path.Combine(SourcePath, relativePath.Replace('/', Path.DirectorySeparatorChar));
+    }
+
+    private string EntryName(string relativePath)
+    {
+        return Prefix + relativePath.Replace('\\', '/');
+    }
+
+    public bool Exists(string relativePath)
+    {
+        if (string.IsNullOrEmpty(relativePath))
+            return false;
+        if (!IsZip)
+            return File.Exists(FullPath(relativePath));
+        try
+        {
+            return ZipGetEntry(SourcePath, EntryName(relativePath)) != null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public byte[]? ReadBytes(string relativePath)
+    {
+        if (string.IsNullOrEmpty(relativePath))
+            return null;
+        if (!IsZip)
+        {
+            try
+            {
+                var full = FullPath(relativePath);
+                return File.Exists(full) ? File.ReadAllBytes(full) : null;
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError($"[MusicBox] Read '{relativePath}' failed: {e.Message}");
+                return null;
+            }
+        }
+        return ZipReadEntry(SourcePath, EntryName(relativePath));
+    }
+
+    public string? ReadText(string relativePath)
+    {
+        var bytes = ReadBytes(relativePath);
+        if (bytes == null)
+            return null;
+        var offset = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
+        return Encoding.UTF8.GetString(bytes, offset, bytes.Length - offset);
+    }
+
+    public string[] ListJson(string relativeDir)
+    {
+        try
+        {
+            if (!IsZip)
+            {
+                var dir = FullPath(relativeDir);
+                if (!Directory.Exists(dir))
+                    return Array.Empty<string>();
+                var files = Directory.GetFiles(dir, "*.json");
+                var result = new string[files.Length];
+                for (int i = 0; i < files.Length; i++)
+                    result[i] = Path.GetFileName(files[i]);
+                return result;
+            }
+            var prefix = EntryName(relativeDir);
+            if (!string.IsNullOrEmpty(prefix) && !prefix.EndsWith("/"))
+                prefix += "/";
+            var stream = Il2CppSystem.IO.File.OpenRead(SourcePath);
+            var archive = new Il2CppSystem.IO.Compression.ZipArchive(stream);
+            try
+            {
+                var result = new List<string>();
+                var entries = archive.Entries;
+                for (int i = 0; i < entries.Count; i++)
+                {
+                    var name = entries[i].FullName;
+                    if (string.IsNullOrEmpty(name) || !name.StartsWith(prefix) || !name.EndsWith(".json"))
+                        continue;
+                    var tail = name.Substring(prefix.Length);
+                    if (tail.Contains("/"))
+                        continue;
+                    result.Add(tail);
+                }
+                return result.ToArray();
+            }
+            finally
+            {
+                archive.Dispose();
+                stream.Dispose();
+            }
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogError($"[MusicBox] List '{relativeDir}' failed: {e.Message}");
+            return Array.Empty<string>();
+        }
+    }
+
+    /// <summary>用于 PCM 缓存失效判断；zip 以整个包为准。</summary>
+    public long Signature(string relativePath)
+    {
+        try
+        {
+            var info = new FileInfo(IsZip ? SourcePath : FullPath(relativePath));
+            if (!info.Exists)
+                return 0;
+            return info.Length * 397L ^ info.LastWriteTimeUtc.Ticks;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static Il2CppSystem.IO.Compression.ZipArchiveEntry? ZipGetEntry(string zipPath, string entryName)
+    {
+        var stream = Il2CppSystem.IO.File.OpenRead(zipPath);
+        var archive = new Il2CppSystem.IO.Compression.ZipArchive(stream);
+        try
+        {
+            return archive.GetEntry(entryName);
+        }
+        finally
+        {
+            archive.Dispose();
+            stream.Dispose();
+        }
+    }
+
+    private static byte[]? ZipReadEntry(string zipPath, string entryName)
+    {
+        try
+        {
+            var stream = Il2CppSystem.IO.File.OpenRead(zipPath);
+            var archive = new Il2CppSystem.IO.Compression.ZipArchive(stream);
+            try
+            {
+                var entry = archive.GetEntry(entryName);
+                if (entry == null)
+                    return null;
+                var entryStream = entry.Open();
+                var chunk = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStructArray<byte>(81920);
+                var result = new List<byte>(65536);
+                try
+                {
+                    while (true)
+                    {
+                        var n = entryStream.Read(chunk, 0, 81920);
+                        if (n <= 0)
+                            break;
+                        for (int i = 0; i < n; i++)
+                            result.Add(chunk[i]);
+                    }
+                }
+                finally
+                {
+                    entryStream.Dispose();
+                }
+                return result.Count == 0 ? null : result.ToArray();
+            }
+            finally
+            {
+                archive.Dispose();
+                stream.Dispose();
+            }
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogError($"[MusicBox] Read zip entry '{entryName}' failed: {e.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>在 zip 中定位包含 pack.json 的根目录前缀。</summary>
+    public static string FindZipPrefix(string zipPath)
+    {
+        try
+        {
+            var stream = Il2CppSystem.IO.File.OpenRead(zipPath);
+            var archive = new Il2CppSystem.IO.Compression.ZipArchive(stream);
+            try
+            {
+                var best = string.Empty;
+                var found = false;
+                var entries = archive.Entries;
+                for (int i = 0; i < entries.Count; i++)
+                {
+                    var name = entries[i].FullName;
+                    if (string.IsNullOrEmpty(name) || !name.EndsWith("pack.json"))
+                        continue;
+                    var prefix = name.Substring(0, name.Length - "pack.json".Length);
+                    if (prefix.Length > 0 && !prefix.EndsWith("/"))
+                        continue;
+                    if (!found || prefix.Length < best.Length)
+                    {
+                        best = prefix;
+                        found = true;
+                    }
+                }
+                return found ? best : string.Empty;
+            }
+            finally
+            {
+                archive.Dispose();
+                stream.Dispose();
+            }
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogError($"[MusicBox] Locate pack.json in '{zipPath}' failed: {e.Message}");
+            return string.Empty;
+        }
+    }
 }
 
 internal static class MiniJson
@@ -239,7 +477,7 @@ internal static class MusicRegistry
     public static readonly List<string> OrderedMainPaths = new List<string>();
     public static readonly Dictionary<string, MusicMeta> Metas = new Dictionary<string, MusicMeta>();
     public static readonly Dictionary<string, AudioClip> Clips = new Dictionary<string, AudioClip>();
-    public static readonly Dictionary<string, string> ClipFiles = new Dictionary<string, string>();
+    public static readonly Dictionary<string, ClipSource> ClipFiles = new Dictionary<string, ClipSource>();
     public static readonly Dictionary<string, MusicPack> Packs = new Dictionary<string, MusicPack>();
     public static readonly Dictionary<string, MusicPack> SongToPack = new Dictionary<string, MusicPack>();
 
@@ -341,13 +579,9 @@ internal static class MusicPackLoader
                 packs.Add(pack);
         }
 
+        // 旧 zip 自动解压为目录；运行时不再直读 zip。
         foreach (var zip in Directory.GetFiles(MusicRegistry.BaseDir, "*.zip"))
-        {
-            var key = Path.GetFileNameWithoutExtension(zip);
-            var pack = TryLoadPack(zip, true, key);
-            if (pack != null)
-                packs.Add(pack);
-        }
+            MigrateZip(zip);
 
         var allMainPaths = new List<string>();
         foreach (var pack in packs)
@@ -385,23 +619,24 @@ internal static class MusicPackLoader
         try
         {
             Diag.Log($"[MusicBox] Load pack '{key}' (zip={isZip})");
-            var rootDir = ResolveRootDir(sourcePath, isZip, key);
-            if (rootDir == null)
+            var rootDir = isZip ? sourcePath : (FindPackRoot(sourcePath, 2) ?? sourcePath);
+            var content = new PackContent
             {
-                Plugin.Log.LogError($"[MusicBox] Music pack '{key}': cannot prepare contents.");
-                return null;
-            }
-            Diag.Log($"[MusicBox] Pack '{key}' root: {rootDir}");
-            var manifestPath = Path.Combine(rootDir, "pack.json");
-            var songsPath = Path.Combine(rootDir, "songs.json");
-            if (!File.Exists(manifestPath) || !File.Exists(songsPath))
+                SourcePath = rootDir,
+                IsZip = isZip,
+                Prefix = isZip ? PackContent.FindZipPrefix(sourcePath) : string.Empty,
+            };
+            Diag.Log($"[MusicBox] Pack '{key}' root: {(isZip ? sourcePath + " (zip)" : rootDir)}");
+            var manifestText = content.ReadText("pack.json");
+            var songsText = content.ReadText("songs.json");
+            if (manifestText == null || songsText == null)
             {
                 Plugin.Log.LogError($"[MusicBox] Music pack '{key}': missing pack.json or songs.json.");
                 return null;
             }
 
-            var manifest = MiniJson.Obj(MiniJson.Parse(File.ReadAllText(manifestPath)));
-            var songRoot = MiniJson.Obj(MiniJson.Parse(File.ReadAllText(songsPath)));
+            var manifest = MiniJson.Obj(MiniJson.Parse(manifestText));
+            var songRoot = MiniJson.Obj(MiniJson.Parse(songsText));
             var songArray = songRoot != null ? MiniJson.Arr(songRoot.GetValueOrDefault("songs")) : null;
             if (manifest == null || songArray == null)
             {
@@ -412,7 +647,7 @@ internal static class MusicPackLoader
             var pack = new MusicPack
             {
                 Key = key,
-                RootDir = rootDir,
+                Content = content,
                 SourcePath = sourcePath,
                 IsZip = isZip,
                 Name = MiniJson.Str(manifest.GetValueOrDefault("name")),
@@ -447,24 +682,24 @@ internal static class MusicPackLoader
                     Plugin.Log.LogError($"[MusicBox] Music pack '{key}': duplicate song id '{entry.id}'.");
                     return null;
                 }
-                if (!IsOgg(entry.file))
+                if (!IsSupportedAudio(entry.file))
                 {
-                    Plugin.Log.LogError($"[MusicBox] Music pack '{key}': song '{entry.id}' file must be .ogg.");
+                    Plugin.Log.LogError($"[MusicBox] Music pack '{key}': song '{entry.id}' file must be .ogg, .wav or .mp3.");
                     return null;
                 }
-                if (!File.Exists(Path.Combine(rootDir, entry.file)))
+                if (!content.Exists(entry.file))
                 {
                     Plugin.Log.LogError($"[MusicBox] Music pack '{key}': song '{entry.id}' file not found: {entry.file}");
                     return null;
                 }
                 if (!string.IsNullOrWhiteSpace(entry.subFile))
                 {
-                    if (!IsOgg(entry.subFile))
+                    if (!IsSupportedAudio(entry.subFile))
                     {
-                        Plugin.Log.LogError($"[MusicBox] Music pack '{key}': song '{entry.id}' subFile must be .ogg.");
+                        Plugin.Log.LogError($"[MusicBox] Music pack '{key}': song '{entry.id}' subFile must be .ogg, .wav or .mp3.");
                         return null;
                     }
-                    if (!File.Exists(Path.Combine(rootDir, entry.subFile)))
+                    if (!content.Exists(entry.subFile))
                     {
                         Plugin.Log.LogError($"[MusicBox] Music pack '{key}': song '{entry.id}' subFile not found: {entry.subFile}");
                         return null;
@@ -488,9 +723,9 @@ internal static class MusicPackLoader
                 {
                     MusicRegistry.Metas[mainPath + "#seq"] = CreateMeta(mainPath + "#seq", entry, mainPath + "#seq", null);
                 }
-                RegisterClip(mainPath, Path.Combine(rootDir, entry.file));
+                RegisterClip(mainPath, new ClipSource { Content = content, RelativePath = entry.file });
                 if (subPath != null)
-                    RegisterClip(subPath, Path.Combine(rootDir, entry.subFile));
+                    RegisterClip(subPath, new ClipSource { Content = content, RelativePath = entry.subFile });
             }
             return pack;
         }
@@ -501,62 +736,9 @@ internal static class MusicPackLoader
         }
     }
 
-    private static string? ResolveRootDir(string sourcePath, bool isZip, string key)
+    public static void ExtractZipToFolder(string zipPath, string destDir)
     {
-        if (!isZip)
-            return FindPackRoot(sourcePath, 2) ?? sourcePath;
-        var extracted = ExtractZip(sourcePath, key);
-        return FindPackRoot(extracted, 3) ?? extracted;
-    }
-
-    private static string? FindPackRoot(string dir, int depth)
-    {
-        if (File.Exists(Path.Combine(dir, "pack.json")))
-            return dir;
-        if (depth <= 0)
-            return null;
-        string[] subs;
-        try
-        {
-            subs = Directory.GetDirectories(dir);
-        }
-        catch
-        {
-            return null;
-        }
-        foreach (var sub in subs)
-        {
-            var name = Path.GetFileName(sub);
-            if (name.StartsWith(".") || name == "__MACOSX")
-                continue;
-            var found = FindPackRoot(sub, depth - 1);
-            if (found != null)
-                return found;
-        }
-        return null;
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static string ExtractZip(string sourcePath, string key)
-    {
-        var dest = Path.Combine(MusicRegistry.CacheDir, key);
-        if (Directory.Exists(dest))
-            Directory.Delete(dest, true);
-        Directory.CreateDirectory(dest);
-        ExtractZipNative(sourcePath, dest);
-        var root = dest;
-        if (!File.Exists(Path.Combine(root, "pack.json")))
-        {
-            var subs = Directory.GetDirectories(root);
-            if (subs.Length == 1 && File.Exists(Path.Combine(subs[0], "pack.json")))
-                root = subs[0];
-        }
-        return root;
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void ExtractZipNative(string zipPath, string destDir)
-    {
+        Directory.CreateDirectory(destDir);
         var stream = Il2CppSystem.IO.File.OpenRead(zipPath);
         var archive = new Il2CppSystem.IO.Compression.ZipArchive(stream);
         try
@@ -592,6 +774,54 @@ internal static class MusicPackLoader
         }
     }
 
+    private static void MigrateZip(string zipPath)
+    {
+        try
+        {
+            var key = Path.GetFileNameWithoutExtension(zipPath);
+            var dest = Path.Combine(MusicRegistry.BaseDir, key);
+            if (Directory.Exists(dest))
+            {
+                File.Delete(zipPath);
+                return;
+            }
+            Diag.Log($"[MusicBox] Migrating zip pack '{key}' to directory");
+            ExtractZipToFolder(zipPath, dest);
+            File.Delete(zipPath);
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogError($"[MusicBox] Migrate zip '{zipPath}' failed: {e}");
+        }
+    }
+
+    private static string? FindPackRoot(string dir, int depth)
+    {
+        if (File.Exists(Path.Combine(dir, "pack.json")))
+            return dir;
+        if (depth <= 0)
+            return null;
+        string[] subs;
+        try
+        {
+            subs = Directory.GetDirectories(dir);
+        }
+        catch
+        {
+            return null;
+        }
+        foreach (var sub in subs)
+        {
+            var name = Path.GetFileName(sub);
+            if (name.StartsWith(".") || name == "__MACOSX")
+                continue;
+            var found = FindPackRoot(sub, depth - 1);
+            if (found != null)
+                return found;
+        }
+        return null;
+    }
+
     public static void CreateZipFromDirectory(string sourceDir, string destPath)
     {
         var fs = Il2CppSystem.IO.File.Open(destPath, Il2CppSystem.IO.FileMode.Create);
@@ -623,9 +853,13 @@ internal static class MusicPackLoader
         }
     }
 
-    private static bool IsOgg(string file)
+    private static bool IsSupportedAudio(string file)
     {
-        return !string.IsNullOrWhiteSpace(file) && file.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(file))
+            return false;
+        return file.EndsWith(".ogg", StringComparison.OrdinalIgnoreCase)
+            || file.EndsWith(".wav", StringComparison.OrdinalIgnoreCase)
+            || file.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase);
     }
 
     private static MusicMeta CreateMeta(string id, SongEntry entry, string mainPath, string? subPath)
@@ -643,9 +877,9 @@ internal static class MusicPackLoader
         return meta;
     }
 
-    private static void RegisterClip(string path, string filePath)
+    private static void RegisterClip(string path, ClipSource source)
     {
-        MusicRegistry.ClipFiles[path] = filePath;
+        MusicRegistry.ClipFiles[path] = source;
     }
 
     private sealed class Pcm
@@ -656,7 +890,7 @@ internal static class MusicPackLoader
     }
 
     private const int PCM_CACHE_MAGIC = 0x4D42504D; // "MBPM"
-    private const int PCM_CACHE_VERSION = 1;
+    private const int PCM_CACHE_VERSION = 2;
     private static readonly object asyncLock = new object();
     private static readonly HashSet<string> pendingDecodes = new HashSet<string>();
     private static readonly HashSet<string> failedDecodes = new HashSet<string>();
@@ -706,20 +940,13 @@ internal static class MusicPackLoader
                 }
             }
 
-            // zip 解压目录：只保留当前 zip 包对应的目录（"pcm" 除外）。
+            // 旧版 zip 解压缓存已废弃：清理 .cache 下除 pcm 外的遗留目录。
             var cacheDir = MusicRegistry.CacheDir;
             if (Directory.Exists(cacheDir))
             {
-                var validDirs = new HashSet<string>(StringComparer.Ordinal);
-                foreach (var pack in MusicRegistry.Packs.Values)
-                {
-                    if (pack.IsZip)
-                        validDirs.Add(pack.Key);
-                }
                 foreach (var dir in Directory.GetDirectories(cacheDir))
                 {
-                    var name = Path.GetFileName(dir);
-                    if (name == "pcm" || validDirs.Contains(name))
+                    if (Path.GetFileName(dir) == "pcm")
                         continue;
                     try
                     {
@@ -727,7 +954,7 @@ internal static class MusicPackLoader
                     }
                     catch (Exception e)
                     {
-                        Diag.Log($"[MusicBox] Cannot delete stale cache dir '{dir}': {e.Message}");
+                        Diag.Log($"[MusicBox] Cannot delete legacy cache dir '{dir}': {e.Message}");
                     }
                 }
             }
@@ -739,21 +966,21 @@ internal static class MusicPackLoader
     }
 
     // 主线程解析出该 clip 需要的文件路径；后台任务不再访问 ClipFiles，避免并发。
-    private static bool ResolveFiles(string path, out string? mainFile, out string? subFile, out bool isSeq)
+    private static bool ResolveFiles(string path, out ClipSource? main, out ClipSource? sub, out bool isSeq)
     {
-        mainFile = null;
-        subFile = null;
+        main = null;
+        sub = null;
         isSeq = path.EndsWith("#seq");
         if (isSeq)
         {
             var basePath = path.Substring(0, path.Length - 4);
-            if (!MusicRegistry.ClipFiles.TryGetValue(basePath, out mainFile))
+            if (!MusicRegistry.ClipFiles.TryGetValue(basePath, out main))
                 return false;
-            if (!MusicRegistry.ClipFiles.TryGetValue(basePath + "_sub", out subFile))
+            if (!MusicRegistry.ClipFiles.TryGetValue(basePath + "_sub", out sub))
                 return false;
             return true;
         }
-        return MusicRegistry.ClipFiles.TryGetValue(path, out mainFile);
+        return MusicRegistry.ClipFiles.TryGetValue(path, out main);
     }
 
     // 后台异步解码：解出 PCM 后由主线程 Pump 创建 AudioClip。
@@ -761,7 +988,7 @@ internal static class MusicPackLoader
     {
         if (MusicRegistry.Clips.ContainsKey(path))
             return;
-        if (!ResolveFiles(path, out var mainFile, out var subFile, out var isSeq))
+        if (!ResolveFiles(path, out var mainSource, out var subSource, out var isSeq))
             return;
         lock (asyncLock)
         {
@@ -774,7 +1001,7 @@ internal static class MusicPackLoader
             Pcm? pcm = null;
             try
             {
-                pcm = BuildPcm(path, mainFile!, subFile, isSeq);
+                pcm = BuildPcm(path, mainSource!, subSource, isSeq);
             }
             catch (Exception e)
             {
@@ -792,11 +1019,11 @@ internal static class MusicPackLoader
     {
         if (MusicRegistry.Clips.ContainsKey(path))
             return true;
-        if (!ResolveFiles(path, out var mainFile, out var subFile, out var isSeq))
+        if (!ResolveFiles(path, out var mainSource, out var subSource, out var isSeq))
             return false;
         try
         {
-            var pcm = BuildPcm(path, mainFile!, subFile, isSeq);
+            var pcm = BuildPcm(path, mainSource!, subSource, isSeq);
             if (pcm == null)
                 return false;
             MusicRegistry.Clips[path] = CreateClip(path, pcm);
@@ -811,30 +1038,40 @@ internal static class MusicPackLoader
         }
     }
 
-    private static Pcm? BuildPcm(string path, string mainFile, string? subFile, bool isSeq)
+    private static Pcm? BuildPcm(string path, ClipSource mainSource, ClipSource? subSource, bool isSeq)
     {
         if (!isSeq)
-            return DecodeFilePcm(path, mainFile);
+            return DecodeFilePcm(path, mainSource);
         var basePath = path.Substring(0, path.Length - 4);
-        var main = DecodeFilePcm(basePath, mainFile);
-        var sub = DecodeFilePcm(basePath + "_sub", subFile!);
+        var main = DecodeFilePcm(basePath, mainSource);
+        var sub = DecodeFilePcm(basePath + "_sub", subSource!);
         if (main == null)
             return null;
         if (sub == null || sub.Channels != main.Channels || sub.SampleRate != main.SampleRate)
+        {
+            if (sub != null)
+                Plugin.Log.LogWarning($"[MusicBox] Sub track ignored for {path}: format mismatch (main {main.Channels}ch/{main.SampleRate}Hz, sub {sub.Channels}ch/{sub.SampleRate}Hz).");
             return main;
+        }
         var data = new float[main.Data.Length + sub.Data.Length];
         Array.Copy(main.Data, 0, data, 0, main.Data.Length);
         Array.Copy(sub.Data, 0, data, main.Data.Length, sub.Data.Length);
         return new Pcm { Data = data, Channels = main.Channels, SampleRate = main.SampleRate };
     }
 
-    private static Pcm? DecodeFilePcm(string cacheKey, string file)
+    private static Pcm? DecodeFilePcm(string cacheKey, ClipSource source)
     {
-        if (TryReadPcmCache(cacheKey, file, out var cached))
+        if (TryReadPcmCache(cacheKey, source, out var cached))
             return cached;
-        var pcm = DecodePcm(file);
+        var bytes = source.Content.ReadBytes(source.RelativePath);
+        if (bytes == null)
+        {
+            Plugin.Log.LogError($"[MusicBox] Cannot read audio '{source.RelativePath}'.");
+            return null;
+        }
+        var pcm = DecodePcm(bytes);
         if (pcm != null)
-            WritePcmCache(cacheKey, file, pcm);
+            WritePcmCache(cacheKey, source, pcm);
         return pcm;
     }
 
@@ -886,7 +1123,7 @@ internal static class MusicPackLoader
             MusicRoomRefresh.Refresh();
     }
 
-    private static bool TryReadPcmCache(string path, string file, out Pcm? pcm)
+    private static bool TryReadPcmCache(string path, ClipSource source, out Pcm? pcm)
     {
         pcm = null;
         try
@@ -894,8 +1131,8 @@ internal static class MusicPackLoader
             var cachePath = PcmCachePath(path);
             if (!File.Exists(cachePath))
                 return false;
-            var info = new FileInfo(file);
-            if (!info.Exists)
+            var signature = source.Content.Signature(source.RelativePath);
+            if (signature == 0)
                 return false;
             using var fs = File.OpenRead(cachePath);
             using var br = new BinaryReader(fs);
@@ -906,11 +1143,10 @@ internal static class MusicPackLoader
             int channels = br.ReadInt32();
             int sampleRate = br.ReadInt32();
             int sampleCount = br.ReadInt32();
-            long srcLength = br.ReadInt64();
-            long srcTicks = br.ReadInt64();
+            long srcSignature = br.ReadInt64();
             if (channels <= 0 || sampleRate <= 0 || sampleCount <= 0)
                 return false;
-            if (info.Length != srcLength || info.LastWriteTimeUtc.Ticks != srcTicks)
+            if (signature != srcSignature)
                 return false;
             var bytes = br.ReadBytes(sampleCount * 4);
             if (bytes.Length != sampleCount * 4)
@@ -926,12 +1162,12 @@ internal static class MusicPackLoader
         }
     }
 
-    private static void WritePcmCache(string path, string file, Pcm pcm)
+    private static void WritePcmCache(string path, ClipSource source, Pcm pcm)
     {
         try
         {
-            var info = new FileInfo(file);
-            if (!info.Exists)
+            var signature = source.Content.Signature(source.RelativePath);
+            if (signature == 0)
                 return;
             Directory.CreateDirectory(PcmCacheDir);
             using var fs = File.Create(PcmCachePath(path));
@@ -941,8 +1177,7 @@ internal static class MusicPackLoader
             bw.Write(pcm.Channels);
             bw.Write(pcm.SampleRate);
             bw.Write(pcm.Data.Length);
-            bw.Write(info.Length);
-            bw.Write(info.LastWriteTimeUtc.Ticks);
+            bw.Write(signature);
             var bytes = new byte[pcm.Data.Length * 4];
             Buffer.BlockCopy(pcm.Data, 0, bytes, 0, bytes.Length);
             bw.Write(bytes);
@@ -953,15 +1188,46 @@ internal static class MusicPackLoader
         }
     }
 
-    private static Pcm? DecodePcm(string filePath)
+    private enum AudioFormat
     {
-        if (DetectOpus(filePath, out int opusChannels))
+        Unknown,
+        Wav,
+        Mp3,
+    }
+
+    private static Pcm? DecodePcm(byte[] data)
+    {
+        switch (DetectAudioFormat(data))
+        {
+            case AudioFormat.Wav:
+                Diag.Log("[MusicBox] Detected WAV");
+                return DecodeWavPcm(data);
+            case AudioFormat.Mp3:
+                Diag.Log("[MusicBox] Detected MP3");
+                return DecodeMp3Pcm(data);
+        }
+        if (DetectOpus(data, out int opusChannels))
         {
             Diag.Log($"[MusicBox] Detected Opus, channels={opusChannels}");
-            return DecodeOpusPcm(filePath, opusChannels);
+            return DecodeOpusPcm(data, opusChannels);
         }
         Diag.Log("[MusicBox] Detected Vorbis");
-        return DecodeVorbisPcm(filePath);
+        return DecodeVorbisPcm(data);
+    }
+
+    private static AudioFormat DetectAudioFormat(byte[] data)
+    {
+        if (data.Length >= 12
+            && data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F'
+            && data[8] == 'W' && data[9] == 'A' && data[10] == 'V' && data[11] == 'E')
+        {
+            return AudioFormat.Wav;
+        }
+        if (data.Length >= 3 && data[0] == 'I' && data[1] == 'D' && data[2] == '3')
+            return AudioFormat.Mp3;
+        if (data.Length >= 2 && data[0] == 0xFF && (data[1] & 0xE0) == 0xE0)
+            return AudioFormat.Mp3;
+        return AudioFormat.Unknown;
     }
 
     private static AudioClip CreateClip(string name, Pcm pcm)
@@ -975,38 +1241,28 @@ internal static class MusicPackLoader
         return clip;
     }
 
-    private static bool DetectOpus(string filePath, out int channels)
+    private static bool DetectOpus(byte[] data, out int channels)
     {
         channels = 2;
-        try
+        for (int i = 0; i + 10 <= data.Length; i++)
         {
-            using var fs = File.OpenRead(filePath);
-            var buf = new byte[65536];
-            int n = fs.Read(buf, 0, buf.Length);
-            for (int i = 0; i + 10 <= n; i++)
+            if (data[i] == (byte)'O' && data[i + 1] == (byte)'p' && data[i + 2] == (byte)'u' && data[i + 3] == (byte)'s'
+                && data[i + 4] == (byte)'H' && data[i + 5] == (byte)'e' && data[i + 6] == (byte)'a' && data[i + 7] == (byte)'d')
             {
-                if (buf[i] == (byte)'O' && buf[i + 1] == (byte)'p' && buf[i + 2] == (byte)'u' && buf[i + 3] == (byte)'s'
-                    && buf[i + 4] == (byte)'H' && buf[i + 5] == (byte)'e' && buf[i + 6] == (byte)'a' && buf[i + 7] == (byte)'d')
-                {
-                    int ch = buf[i + 9];
-                    if (ch > 0 && ch <= 8)
-                        channels = ch;
-                    return true;
-                }
+                int ch = data[i + 9];
+                if (ch > 0 && ch <= 8)
+                    channels = ch;
+                return true;
             }
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.LogError($"[MusicBox] Detect codec failed: {e}");
         }
         return false;
     }
 
-    private static Pcm? DecodeOpusPcm(string filePath, int channels)
+    private static Pcm? DecodeOpusPcm(byte[] data, int channels)
     {
-        var fileStream = File.OpenRead(filePath);
+        using var memory = new MemoryStream(data, false);
         var decoder = new OpusDecoder(48000, channels);
-        var oggStream = new OpusOggReadStream(decoder, fileStream);
+        var oggStream = new OpusOggReadStream(decoder, memory);
         var samples = new List<short>();
         while (oggStream.HasNextPacket)
         {
@@ -1015,34 +1271,187 @@ internal static class MusicPackLoader
                 samples.AddRange(packet);
         }
         oggStream.Close();
-        fileStream.Dispose();
         if (samples.Count == 0)
             return null;
         int frameCount = samples.Count / channels;
-        var data = new float[frameCount * channels];
-        for (int i = 0; i < data.Length && i < samples.Count; i++)
-            data[i] = samples[i] / 32768f;
-        return new Pcm { Data = data, Channels = channels, SampleRate = 48000 };
+        var pcmData = new float[frameCount * channels];
+        for (int i = 0; i < pcmData.Length && i < samples.Count; i++)
+            pcmData[i] = samples[i] / 32768f;
+        return new Pcm { Data = pcmData, Channels = channels, SampleRate = 48000 };
     }
 
-    private static Pcm? DecodeVorbisPcm(string filePath)
+    private static Pcm? DecodeVorbisPcm(byte[] data)
     {
-        using var reader = new VorbisReader(filePath);
+        using var memory = new MemoryStream(data, false);
+        using var reader = new VorbisReader(memory);
         int channels = reader.Channels;
         int sampleRate = reader.SampleRate;
         int lengthSamples = (int)reader.TotalSamples;
         if (lengthSamples <= 0 || channels <= 0 || sampleRate <= 0)
             return null;
-        var data = new float[lengthSamples * channels];
+        var pcmData = new float[lengthSamples * channels];
         int read = 0;
-        while (read < data.Length)
+        while (read < pcmData.Length)
         {
-            int n = reader.ReadSamples(data, read, data.Length - read);
+            int n = reader.ReadSamples(pcmData, read, pcmData.Length - read);
             if (n <= 0)
                 break;
             read += n;
         }
-        return new Pcm { Data = data, Channels = channels, SampleRate = sampleRate };
+        return new Pcm { Data = pcmData, Channels = channels, SampleRate = sampleRate };
+    }
+
+    private static Pcm? DecodeWavPcm(byte[] data)
+    {
+        try
+        {
+            using var fs = new MemoryStream(data, false);
+            using var reader = new BinaryReader(fs, Encoding.ASCII, true);
+            if (Encoding.ASCII.GetString(reader.ReadBytes(4)) != "RIFF")
+                return null;
+            reader.ReadInt32();
+            if (Encoding.ASCII.GetString(reader.ReadBytes(4)) != "WAVE")
+                return null;
+
+            int format = 0;
+            int channels = 0;
+            int sampleRate = 0;
+            int bits = 0;
+            long dataOffset = -1;
+            int dataSize = 0;
+
+            while (fs.Position + 8 <= fs.Length)
+            {
+                var id = Encoding.ASCII.GetString(reader.ReadBytes(4));
+                var size = reader.ReadInt32();
+                if (size < 0)
+                    break;
+                var next = fs.Position + size + (size & 1);
+                if (id == "fmt ")
+                {
+                    var fmt = reader.ReadBytes(size);
+                    if (fmt.Length < 16)
+                        return null;
+                    format = BitConverter.ToInt16(fmt, 0);
+                    channels = BitConverter.ToInt16(fmt, 2);
+                    sampleRate = BitConverter.ToInt32(fmt, 4);
+                    bits = BitConverter.ToInt16(fmt, 14);
+                    if (format == 0xFFFE && fmt.Length >= 26)
+                        format = BitConverter.ToInt16(fmt, 24);
+                }
+                else if (id == "data")
+                {
+                    dataOffset = fs.Position;
+                    dataSize = size;
+                }
+                if (next > fs.Length)
+                    break;
+                fs.Position = next;
+            }
+
+            if (format != 1 && format != 3)
+                return null;
+            if (dataOffset < 0 || dataSize <= 0 || channels <= 0 || sampleRate <= 0)
+                return null;
+            var bytesPerSample = bits / 8;
+            if (bytesPerSample <= 0)
+                return null;
+            if (format == 3 && bits != 32 && bits != 64)
+                return null;
+
+            fs.Position = dataOffset;
+            var raw = reader.ReadBytes(dataSize);
+            var frameCount = raw.Length / (bytesPerSample * channels);
+            if (frameCount <= 0)
+                return null;
+
+            var pcmData = new float[frameCount * channels];
+            for (int i = 0; i < pcmData.Length; i++)
+            {
+                var offset = i * bytesPerSample;
+                if (format == 3)
+                {
+                    pcmData[i] = bits == 64
+                        ? (float)BitConverter.ToDouble(raw, offset)
+                        : BitConverter.ToSingle(raw, offset);
+                }
+                else
+                {
+                    switch (bits)
+                    {
+                        case 8:
+                            pcmData[i] = (raw[offset] - 128) / 128f;
+                            break;
+                        case 16:
+                            pcmData[i] = BitConverter.ToInt16(raw, offset) / 32768f;
+                            break;
+                        case 24:
+                            pcmData[i] = Read24Bit(raw, offset) / 8388608f;
+                            break;
+                        case 32:
+                            pcmData[i] = BitConverter.ToInt32(raw, offset) / 2147483648f;
+                            break;
+                        default:
+                            return null;
+                    }
+                }
+            }
+            return new Pcm { Data = pcmData, Channels = channels, SampleRate = sampleRate };
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogError($"[MusicBox] Decode WAV failed: {e}");
+            return null;
+        }
+    }
+
+    private static int Read24Bit(byte[] raw, int offset)
+    {
+        var value = raw[offset] | (raw[offset + 1] << 8) | (raw[offset + 2] << 16);
+        if ((value & 0x800000) != 0)
+            value |= unchecked((int)0xFF000000);
+        return value;
+    }
+
+    private static Pcm? DecodeMp3Pcm(byte[] data)
+    {
+        try
+        {
+            using var memory = new MemoryStream(data, false);
+            using var reader = new MpegFile(memory);
+            var channels = reader.Channels;
+            var sampleRate = reader.SampleRate;
+            if (channels <= 0 || sampleRate <= 0)
+                return null;
+
+            var estimated = reader.Length / 4;
+            if (estimated <= 0)
+                estimated = 1024L * channels;
+            if (estimated > int.MaxValue / 2)
+                estimated = int.MaxValue / 2;
+
+            var pcmData = new float[(int)estimated];
+            var read = 0;
+            while (true)
+            {
+                if (read == pcmData.Length)
+                    Array.Resize(ref pcmData, pcmData.Length * 2);
+                var n = reader.ReadSamples(pcmData, read, pcmData.Length - read);
+                if (n <= 0)
+                    break;
+                read += n;
+            }
+            if (read <= 0)
+                return null;
+            if (read < pcmData.Length)
+                Array.Resize(ref pcmData, read);
+            return new Pcm { Data = pcmData, Channels = channels, SampleRate = sampleRate };
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.LogError($"[MusicBox] Decode MP3 failed: {e}");
+            return null;
+        }
     }
 
     public static List<string> LoadOrder()

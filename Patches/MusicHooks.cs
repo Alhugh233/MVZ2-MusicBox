@@ -70,16 +70,16 @@ internal static class GetMusicMetaPatch
     }
 }
 
-[HarmonyPatch(typeof(ResourceManager), nameof(ResourceManager.GetMusicClip))]
+[HarmonyPatch(typeof(ResourceManager), nameof(ResourceManager.GetFinalAudioClip))]
 internal static class GetMusicClipPatch
 {
-    private static bool Prefix(NamespaceID path, ref AudioClip __result)
+    private static bool Prefix(NamespaceID id, ref AudioClip __result)
     {
-        if (path != null && path.SpaceName == MusicRegistry.Namespace)
+        if (id != null && id.SpaceName == MusicRegistry.Namespace)
         {
-            if (!MusicRegistry.Clips.ContainsKey(path.Path))
-                MusicPackLoader.EnsureClipAsync(path.Path);
-            MusicRegistry.Clips.TryGetValue(path.Path, out var clip);
+            if (!MusicRegistry.Clips.ContainsKey(id.Path))
+                MusicPackLoader.EnsureClipAsync(id.Path);
+            MusicRegistry.Clips.TryGetValue(id.Path, out var clip);
             __result = clip!;
             return false;
         }

@@ -11,7 +11,7 @@ using MVZ2.IO;
 using MVZ2.Localization;
 using MVZ2.Managers;
 using MVZ2.UI;
-using MVZ2.UI.Addons;
+using PVZEngine.Tools.Unity;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
@@ -35,7 +35,7 @@ internal static class AddonsButtonPatch
     }
 }
 
-[HarmonyPatch(typeof(LanguagePacksController), nameof(LanguagePacksController.Awake))]
+[HarmonyPatch(typeof(ResourcePacksController), nameof(ResourcePacksController.Awake))]
 internal static class LanguagePackAwakeGuard
 {
     private static bool Prefix()
@@ -44,7 +44,7 @@ internal static class LanguagePackAwakeGuard
     }
 }
 
-[HarmonyPatch(typeof(LanguagePacksController), nameof(LanguagePacksController.OnButtonClickCallback))]
+[HarmonyPatch(typeof(ResourcePacksController), nameof(ResourcePacksController.OnButtonClickCallback))]
 internal static class LanguagePackButtonGuard
 {
     private static bool Prefix()
@@ -53,7 +53,7 @@ internal static class LanguagePackButtonGuard
     }
 }
 
-[HarmonyPatch(typeof(LanguagePacksController), nameof(LanguagePacksController.OnPackItemToggledCallback))]
+[HarmonyPatch(typeof(ResourcePacksController), nameof(ResourcePacksController.OnPackItemToggledCallback))]
 internal static class LanguagePackToggleGuard
 {
     private static bool Prefix()
@@ -62,7 +62,7 @@ internal static class LanguagePackToggleGuard
     }
 }
 
-[HarmonyPatch(typeof(LanguagePacksController), nameof(LanguagePacksController.Display))]
+[HarmonyPatch(typeof(ResourcePacksController), nameof(ResourcePacksController.Display))]
 internal static class LanguagePackDisplayPatch
 {
     private static void Prefix()
@@ -77,7 +77,7 @@ internal static class MusicPacksPage
     public static bool CloningMusicPage;
     private static AddonsController? addons;
     private static GameObject? pageGo;
-    private static LanguagePacksUI? pageUi;
+    private static ResourcePacksUI? pageUi;
     private static TMP_Text? hintText;
     private static TMP_Text? buttonLabelTmp;
     private static UnityEngine.UI.Text? buttonLabelUi;
@@ -185,16 +185,16 @@ internal static class MusicPacksPage
         pageGo.name = "MusicPackPage";
         pageGo.transform.SetSiblingIndex(src.transform.GetSiblingIndex() + 1);
 
-        pageUi = pageGo.GetComponentInChildren<LanguagePacksUI>(true);
+        pageUi = pageGo.GetComponentInChildren<ResourcePacksUI>(true);
         if (pageUi == null)
         {
-            Plugin.Log.LogError("[MusicBox] Could not find LanguagePacksUI in cloned page.");
+            Plugin.Log.LogError("[MusicBox] Could not find ResourcePacksUI in cloned page.");
             return;
         }
-        pageUi.OnButtonClick = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<LanguagePacksUI.Buttons>>(new Action<LanguagePacksUI.Buttons>(OnButtonClick));
+        pageUi.OnButtonClick = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<ResourcePacksUI.Buttons>>(new Action<ResourcePacksUI.Buttons>(OnButtonClick));
         pageUi.OnPackItemToggled = DelegateSupport.ConvertDelegate<Il2CppSystem.Action<bool, int, bool>>(new Action<bool, int, bool>(OnItemToggled));
 
-        var ctrl = pageGo.GetComponentInChildren<LanguagePacksController>(true);
+        var ctrl = pageGo.GetComponentInChildren<ResourcePacksController>(true);
         if (ctrl != null)
             UnityEngine.Object.Destroy(ctrl);
 
@@ -313,13 +313,13 @@ internal static class MusicPacksPage
         orderedSongs.Clear();
         orderedSongs.AddRange(MusicRegistry.OrderedMainPaths);
 
-        var viewDatas = new Il2CppReferenceArray<LanguagePackViewData>(orderedSongs.Count);
+        var viewDatas = new Il2CppReferenceArray<ResourcePackViewData>(orderedSongs.Count);
         for (int i = 0; i < orderedSongs.Count; i++)
         {
             var path = orderedSongs[i];
             var meta = MusicRegistry.Metas.TryGetValue(path, out var m) ? m : null;
             var pack = MusicRegistry.SongToPack.TryGetValue(path, out var p) ? p : null;
-            var vd = new LanguagePackViewData
+            var vd = new ResourcePackViewData
             {
                 name = meta != null ? Loc.MusicName(meta.Name) : path,
             };
@@ -337,7 +337,7 @@ internal static class MusicPacksPage
             viewDatas[i] = vd;
         }
         pageUi.SetEnabledLanguagePacks(viewDatas);
-        pageUi.SetDisabledLanguagePacks(new Il2CppReferenceArray<LanguagePackViewData>(0));
+        pageUi.SetDisabledLanguagePacks(new Il2CppReferenceArray<ResourcePackViewData>(0));
         selectedIndex = -1;
         UpdateButtons();
     }
@@ -347,12 +347,12 @@ internal static class MusicPacksPage
         if (pageUi == null)
             return;
         bool selected = selectedIndex >= 0 && selectedIndex < orderedSongs.Count;
-        pageUi.SetButtonInteractable(LanguagePacksUI.Buttons.Export, selected);
-        pageUi.SetButtonInteractable(LanguagePacksUI.Buttons.Delete, selected);
-        pageUi.SetButtonInteractable(LanguagePacksUI.Buttons.MoveUp, selected && selectedIndex > 0);
-        pageUi.SetButtonInteractable(LanguagePacksUI.Buttons.MoveDown, selected && selectedIndex < orderedSongs.Count - 1);
-        pageUi.SetButtonInteractable(LanguagePacksUI.Buttons.Import, true);
-        pageUi.SetButtonInteractable(LanguagePacksUI.Buttons.Return, true);
+        pageUi.SetButtonInteractable(ResourcePacksUI.Buttons.Export, selected);
+        pageUi.SetButtonInteractable(ResourcePacksUI.Buttons.Delete, selected);
+        pageUi.SetButtonInteractable(ResourcePacksUI.Buttons.MoveUp, selected && selectedIndex > 0);
+        pageUi.SetButtonInteractable(ResourcePacksUI.Buttons.MoveDown, selected && selectedIndex < orderedSongs.Count - 1);
+        pageUi.SetButtonInteractable(ResourcePacksUI.Buttons.Import, true);
+        pageUi.SetButtonInteractable(ResourcePacksUI.Buttons.Return, true);
     }
 
     private static void OnItemToggled(bool enabled, int index, bool value)
@@ -453,7 +453,21 @@ internal static class MusicPacksPage
                 var t = tmps[i];
                 if (t == null)
                     continue;
+                // 优先按翻译组件的原始键匹配，避免受当前语言影响。
                 var s = t.text;
+                var tTranslator = t.GetComponent<TextMeshProUGUITranslator>();
+                if (tTranslator != null)
+                {
+                    try
+                    {
+                        var key = tTranslator.GetKeyInner();
+                        if (!string.IsNullOrEmpty(key))
+                            s = key;
+                    }
+                    catch
+                    {
+                    }
+                }
                 if (string.IsNullOrEmpty(s))
                     continue;
                 if (s.Contains("语言包") && (s.Contains("更上方") || s.Contains("优先")))
@@ -471,28 +485,28 @@ internal static class MusicPacksPage
         hintText.text = Loc.T(HINT_KEY);
     }
 
-    private static void OnButtonClick(LanguagePacksUI.Buttons button)
+    private static void OnButtonClick(ResourcePacksUI.Buttons button)
     {
         try
         {
             switch (button)
             {
-                case LanguagePacksUI.Buttons.Return:
+                case ResourcePacksUI.Buttons.Return:
                     ClosePage();
                     break;
-                case LanguagePacksUI.Buttons.Import:
+                case ResourcePacksUI.Buttons.Import:
                     Import();
                     break;
-                case LanguagePacksUI.Buttons.Export:
+                case ResourcePacksUI.Buttons.Export:
                     Export();
                     break;
-                case LanguagePacksUI.Buttons.Delete:
+                case ResourcePacksUI.Buttons.Delete:
                     Delete();
                     break;
-                case LanguagePacksUI.Buttons.MoveUp:
+                case ResourcePacksUI.Buttons.MoveUp:
                     Move(-1);
                     break;
-                case LanguagePacksUI.Buttons.MoveDown:
+                case ResourcePacksUI.Buttons.MoveDown:
                     Move(1);
                     break;
             }
@@ -533,8 +547,11 @@ internal static class MusicPacksPage
         try
         {
             Directory.CreateDirectory(MusicRegistry.BaseDir);
-            var dest = Path.Combine(MusicRegistry.BaseDir, Path.GetFileName(path));
-            File.Copy(path, dest, true);
+            var key = Path.GetFileNameWithoutExtension(path);
+            var dest = Path.Combine(MusicRegistry.BaseDir, key);
+            if (Directory.Exists(dest))
+                Directory.Delete(dest, true);
+            MusicPackLoader.ExtractZipToFolder(path, dest);
             MusicPackLoader.Reload();
             Refresh();
         }
@@ -566,7 +583,7 @@ internal static class MusicPacksPage
             }
             else
             {
-                MusicPackLoader.CreateZipFromDirectory(pack.RootDir, dest);
+                MusicPackLoader.CreateZipFromDirectory(pack.Content.SourcePath, dest);
             }
         }
         catch (Exception e)

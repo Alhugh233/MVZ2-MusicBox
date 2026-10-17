@@ -10,6 +10,8 @@
 
 > **从 v1.2 起，本 Mod 运行时依赖 [LanguagePackEnhance](https://github.com/Alhugh233/MVZ2-LPE)（LPE）。** v1.1 及更早版本可独立运行。
 
+> **从 v1.3 起，本 Mod 适配 MVZ2 0.7.X 底层。** 对 EXPAND 等改版的支持将在其源码更新后于后续版本恢复。
+
 ## 目录
 
 - [概述](#概述)
@@ -41,7 +43,7 @@ MusicBox 通过 BepInEx 在运行时注入游戏，提供：
 
 ## 功能
 
-- **自定义音乐包**：放入 `music_packs/`；文件夹或 `.zip` 均可，音频支持 Vorbis 与 Opus 的 `.ogg`。
+- **自定义音乐包**：放入 `music_packs/`；文件夹或 `.zip` 均可，音频支持 `.ogg`（Vorbis/Opus）、`.wav`（PCM / IEEE float）与 `.mp3`。
 - **音乐室恒常可用**：绕过进度解锁（只读检查，不修改存档）。
 - **音乐包管理**：在「插件」界面导入 / 导出 / 删除 / 排序。
 - **自定义战斗音乐**：
@@ -56,12 +58,13 @@ MusicBox 通过 BepInEx 在运行时注入游戏，提供：
 
 1. 确认游戏已安装 **BepInEx 6 (IL2CPP)**。
 2. 安装 **[LanguagePackEnhance](https://github.com/Alhugh233/MVZ2-LPE)**（硬依赖）。MusicBox 的自身界面文本与自定义曲目元数据都经由它做本地化。
-3. 把以下 4 个 DLL 复制到 `BepInEx/plugins/`（同一目录）：
+3. 把以下 5 个 DLL 复制到 `BepInEx/plugins/`（同一目录）：
 
    - `MusicBox.dll`
    - `NVorbis.dll`
    - `Concentus.dll`
    - `Concentus.Oggfile.dll`
+   - `NLayer.dll`
 
 4. 启动游戏。日志出现 `Plugin com.mvz2.musicbox is loaded!` 即安装成功。
 
@@ -117,7 +120,7 @@ MusicBox 接入了 **[LanguagePackEnhance](https://github.com/Alhugh233/MVZ2-LPE
 music_packs/<包名>/      或 <包名>.zip
     pack.json                 { name, author, description, dataVersion }
     songs.json                { "songs": [ { ... } ] }
-    *.ogg
+    *.ogg / *.wav / *.mp3
 ```
 
 `pack.json`：
@@ -156,8 +159,8 @@ music_packs/<包名>/      或 <包名>.zip
 | --- | --- | --- |
 | `id` | 是 | 包内唯一；缺失 / 重复会**整包拒绝** |
 | `name` | 否 | 音乐室显示名；允许重复 |
-| `file` | 是 | 主轨文件，必须是 `.ogg` |
-| `subFile` | 否 | 副轨文件，必须是 `.ogg` |
+| `file` | 是 | 主轨文件：`.ogg` / `.wav` / `.mp3` |
+| `subFile` | 否 | 副轨文件：`.ogg` / `.wav` / `.mp3` |
 | `source` / `origin` / `author` / `description` | 否 | 音乐室信息与评测文本 |
 
 ### languages/&lt;lang&gt;.json（可选）
@@ -171,7 +174,7 @@ music_packs/<包名>/
     languages/
         en-US.json
         ja-JP.json
-    *.ogg
+    *.ogg / *.wav / *.mp3
 ```
 
 ```json
@@ -214,24 +217,24 @@ music_packs/<包名>/
 
 1. 把目标版本的游戏 **interop DLL** 放入仓库的 `interop/` 目录（该目录已在 `.gitignore` 中），或用 `-p:InteropDir=` 指定。
 
-2. 编译所用的 `LanguagePackEnhance.API.dll` 位于 `libs/`（已随仓库提供）。如需更新，替换为新版或通过 `-p:LpeDir=` 指定。
+2. 编译所用的 `LanguagePackEnhance.API.dll` 位于 `libs/`（来自 [MVZ2-LPEAPI](https://github.com/Alhugh233/MVZ2-LPEAPI)，API v1.1.0，已随仓库提供）。如需更新，替换为新版或通过 `-p:LpeDir=` 指定。
 
 3. 构建：
 
 ```bash
 dotnet build
 # 或指定 interop 目录
-dotnet build -p:InteropDir=/path/to/interop_mvz2expand
 dotnet build -p:InteropDir=/path/to/interop_mvz2
 ```
 
-产物在 `bin/Debug/net6.0/`。部署时把 `MusicBox.dll`、`NVorbis.dll`、`Concentus.dll`、`Concentus.Oggfile.dll` 一起放好。
+产物在 `bin/Debug/net6.0/`。部署时把 `MusicBox.dll`、`NVorbis.dll`、`Concentus.dll`、`Concentus.Oggfile.dll`、`NLayer.dll` 一起放好。
 
 ### 依赖
 
 - `BepInEx.Unity.IL2CPP`、`BepInEx.PluginInfoProps`
 - `NVorbis`（Vorbis 解码）
 - `Concentus.Oggfile` / `Concentus`（Opus 解码）
+- `NLayer`（MP3 解码）
 - **[LanguagePackEnhance](https://github.com/Alhugh233/MVZ2-LPE)**（运行时硬依赖）。编译期从 `libs/` 引用瘦 API `LanguagePackEnhance.API.dll`（[MVZ2-LPEAPI](https://github.com/Alhugh233/MVZ2-LPEAPI)）。
 
 ## 兼容性
@@ -239,8 +242,8 @@ dotnet build -p:InteropDir=/path/to/interop_mvz2
 - 目标框架：`net6.0`（BepInEx 6 IL2CPP / CoreCLR）。
 - 插件 GUID：`com.mvz2.musicbox`。
 - 依赖 **LanguagePackEnhance**（`com.mvz2.languagepackenhance`）。
-- **原版与 Expand 通用**：对比两份 interop，MusicBox 用到的每个类型 / 成员签名都**完全一致**，interop 程序集同名，BepInEx 按名绑定，因此**同一份 DLL 对相同构建版本在两版上都能用**。版本特有的内容差异（如仅 Expand 存在的 `_15` Boss 关）由运行时枚举处理。
-- **注意：目前只在 Expand 上真机测试过，原版尚未测试。**
+- 面向 **MVZ2 0.7.X** 适配（interop：0.7.X 的 interop 集）。EXPAND 等改版将在其源码更新到 0.7.X 底层后恢复支持。
+- 已在实机上针对 MVZ2 0.7.X 验证。
 
 ## 已知限制
 
@@ -318,7 +321,7 @@ MusicBox/
 - **MVZ2Expand** 作者 Tr-DESE107 — <https://github.com/Tr-DESE107/MinecraftVsZombies2_EXPAND>
 - **LanguagePackEnhance** 作者 Alhugh233 — Mod 本地化框架。
 - 框架：BepInEx。
-- 解码器：NVorbis（Vorbis）、Concentus（Opus）。
+- 解码器：NVorbis（Vorbis）、Concentus（Opus）、NLayer（MP3）。
 
 ## 许可
 
@@ -328,4 +331,4 @@ MusicBox/
 
 本项目**直接基于两个开源游戏 MVZ2 与 MVZ2Expand**（均为 GPL-3.0）。它是一个通过 BepInEx / Harmony 与游戏互操作的运行时 Mod，不重新分发游戏的程序集。
 
-第三方组件（NVorbis、Concentus、Concentus.Oggfile）及其许可声明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+第三方组件（NVorbis、Concentus、Concentus.Oggfile、NLayer）及其许可声明见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。

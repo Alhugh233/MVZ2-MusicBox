@@ -34,6 +34,7 @@ internal static class BattleMusic
         { "mvz2:mausoleum_11", new[] { "mvz2:mausoleum_final", "mvz2:mausoleum_boss", "mvz2:mausoleum_boss_2" } },
         { "mvz2:ship_11", new[] { "mvz2:ship_final", "mvz2:ship_boss" } },
         { "mvz2:palace_11", new[] { "mvz2:palace_final", "mvz2:palace_boss" } },
+        { "mvz2:mountain_11", new[] { "mvz2:mountain_final", "mvz2:mountain_boss" } },
     };
 
     public static string Key(NamespaceID id)

@@ -10,6 +10,8 @@ It lets players add custom music packs, always shows the Music Room, and customi
 
 > **Since v1.2, this mod requires [LanguagePackEnhance](https://github.com/Alhugh233/MVZ2-LPE) (LPE) at runtime.** v1.1 and earlier work standalone.
 
+> **Since v1.3, this mod targets the MVZ2 0.7.X base.** Support for EXPAND and other variants will return in a later version, once their sources are updated.
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -41,7 +43,7 @@ This project is developed with **Vibe Coding**: the code and documentation are w
 
 ## Features
 
-- **Custom music packs**: drop them into `music_packs/`; folder or `.zip`, audio supports Vorbis and Opus `.ogg`.
+- **Custom music packs**: drop them into `music_packs/`; folder or `.zip`, audio supports `.ogg` (Vorbis/Opus), `.wav` (PCM / IEEE float) and `.mp3`.
 - **Always-available Music Room**: bypasses progress unlocks (a read-only check; the save is not modified).
 - **Music pack management**: import / export / delete / reorder from the Addons screen.
 - **Custom battle music**:
@@ -56,12 +58,13 @@ This project is developed with **Vibe Coding**: the code and documentation are w
 
 1. Make sure the game has **BepInEx 6 (IL2CPP)** installed.
 2. Install **[LanguagePackEnhance](https://github.com/Alhugh233/MVZ2-LPE)** (hard dependency). MusicBox routes its own UI text and custom-track metadata through it for localization.
-3. Copy the following 4 DLLs into `BepInEx/plugins/` (same folder):
+3. Copy the following 5 DLLs into `BepInEx/plugins/` (same folder):
 
    - `MusicBox.dll`
    - `NVorbis.dll`
    - `Concentus.dll`
    - `Concentus.Oggfile.dll`
+   - `NLayer.dll`
 
 4. Start the game. If the log shows `Plugin com.mvz2.musicbox is loaded!`, installation succeeded.
 
@@ -117,7 +120,7 @@ Lookup priority everywhere: **imported third-party language pack > mod's own pac
 music_packs/<pack name>/      or <pack name>.zip
     pack.json                 { name, author, description, dataVersion }
     songs.json                { "songs": [ { ... } ] }
-    *.ogg
+    *.ogg / *.wav / *.mp3
 ```
 
 `pack.json`:
@@ -156,8 +159,8 @@ Field reference:
 | --- | --- | --- |
 | `id` | yes | Unique within the pack; missing / duplicate rejects the **whole pack** |
 | `name` | no | Display name in the Music Room; duplicates allowed |
-| `file` | yes | Main track file, must be `.ogg` |
-| `subFile` | no | Sub track file, must be `.ogg` |
+| `file` | yes | Main track file: `.ogg` / `.wav` / `.mp3` |
+| `subFile` | no | Sub track file: `.ogg` / `.wav` / `.mp3` |
 | `source` / `origin` / `author` / `description` | no | Music Room info and review text |
 
 ### languages/&lt;lang&gt;.json (optional)
@@ -171,7 +174,7 @@ music_packs/<pack name>/
     languages/
         en-US.json
         ja-JP.json
-    *.ogg
+    *.ogg / *.wav / *.mp3
 ```
 
 ```json
@@ -214,24 +217,24 @@ Requirements: `.NET SDK` (target `net6.0`).
 
 1. Put the game **interop DLLs** for the target version into the repo's `interop/` folder (this folder is `.gitignore`d), or specify it at build time with `-p:InteropDir=`.
 
-2. The thin API `LanguagePackEnhance.API.dll` used for compilation lives in `libs/` (vendored). Replace it with a newer build of LanguagePackEnhance.API if needed, or pass `-p:LpeDir=`.
+2. The thin API `LanguagePackEnhance.API.dll` used for compilation lives in `libs/` (vendored from [MVZ2-LPEAPI](https://github.com/Alhugh233/MVZ2-LPEAPI), API v1.1.0). Replace it with a newer build of LanguagePackEnhance.API if needed, or pass `-p:LpeDir=`.
 
 3. Build:
 
 ```bash
 dotnet build
 # or point to a specific interop directory
-dotnet build -p:InteropDir=/path/to/interop_mvz2expand
 dotnet build -p:InteropDir=/path/to/interop_mvz2
 ```
 
-Output is in `bin/Debug/net6.0/`. Deploy `MusicBox.dll`, `NVorbis.dll`, `Concentus.dll`, and `Concentus.Oggfile.dll` together.
+Output is in `bin/Debug/net6.0/`. Deploy `MusicBox.dll`, `NVorbis.dll`, `Concentus.dll`, `Concentus.Oggfile.dll`, and `NLayer.dll` together.
 
 ### Dependencies
 
 - `BepInEx.Unity.IL2CPP`, `BepInEx.PluginInfoProps`
 - `NVorbis` (Vorbis decoding)
 - `Concentus.Oggfile` / `Concentus` (Opus decoding)
+- `NLayer` (MP3 decoding)
 - **[LanguagePackEnhance](https://github.com/Alhugh233/MVZ2-LPE)** (runtime hard dependency). Compile time references the thin API `LanguagePackEnhance.API.dll` ([MVZ2-LPEAPI](https://github.com/Alhugh233/MVZ2-LPEAPI)) from `libs/`.
 
 ## Compatibility
@@ -239,8 +242,8 @@ Output is in `bin/Debug/net6.0/`. Deploy `MusicBox.dll`, `NVorbis.dll`, `Concent
 - Target framework: `net6.0` (BepInEx 6 IL2CPP / CoreCLR).
 - Plugin GUID: `com.mvz2.musicbox`.
 - Depends on **LanguagePackEnhance** (`com.mvz2.languagepackenhance`).
-- **Vanilla and Expand**: comparing both interops, every type / member MusicBox uses has **identical signatures**, the interop assemblies share the same simple names, and BepInEx binds by name; therefore **a single DLL should work on both for the same build**. Version-specific content differences (e.g. the `_15` Boss stage that only exists in Expand) are handled by runtime enumeration.
-- **Note: only the Expand build has been tested on a real device; vanilla has not been tested yet.**
+- Targets **MVZ2 0.7.X** (interop: the 0.7.X interop set). EXPAND support will return once its source is updated to the 0.7.X base.
+- Verified on a real device against MVZ2 0.7.X.
 
 ## Known Limitations
 
@@ -318,7 +321,7 @@ Others:
 - **MVZ2Expand** by Tr-DESE107 — <https://github.com/Tr-DESE107/MinecraftVsZombies2_EXPAND>
 - **LanguagePackEnhance** by Alhugh233 — mod localization framework.
 - Framework: BepInEx.
-- Decoders: NVorbis (Vorbis), Concentus (Opus).
+- Decoders: NVorbis (Vorbis), Concentus (Opus), NLayer (MP3).
 
 ## License
 
@@ -328,4 +331,4 @@ This project is licensed under the **GNU General Public License v3.0**. The full
 
 This project is **directly based on the two open-source games MVZ2 and MVZ2Expand** (both GPL-3.0). It is a runtime mod that interoperates with them through BepInEx / Harmony and does not redistribute the games' assemblies.
 
-Third-party components (NVorbis, Concentus, Concentus.Oggfile) and their license notices are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+Third-party components (NVorbis, Concentus, Concentus.Oggfile, NLayer) and their license notices are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

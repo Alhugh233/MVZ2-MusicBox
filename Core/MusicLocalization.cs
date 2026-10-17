@@ -50,11 +50,7 @@ internal static class MusicLocalization
 
     private static void CollectPack(MusicPack pack, List<TranslationEntry> entries)
     {
-        var dir = Path.Combine(pack.RootDir, "languages");
-        if (!Directory.Exists(dir))
-            return;
-
-        foreach (var file in Directory.GetFiles(dir, "*.json"))
+        foreach (var file in pack.Content.ListJson("languages"))
         {
             var language = Path.GetFileNameWithoutExtension(file);
             if (string.IsNullOrEmpty(language))
@@ -63,7 +59,10 @@ internal static class MusicLocalization
             Dictionary<string, object?>? root;
             try
             {
-                root = MiniJson.Obj(MiniJson.Parse(File.ReadAllText(file)));
+                var text = pack.Content.ReadText("languages/" + file);
+                if (text == null)
+                    continue;
+                root = MiniJson.Obj(MiniJson.Parse(text));
             }
             catch (Exception e)
             {
